@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SOC SIEM Dashboard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    html, body { width:100%; height:100%; margin:0; overflow:hidden; background:#0b1220; color:#e5e7eb; font-family:Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    * { box-sizing:border-box; }
+    .app { width:100vw; height:100vh; display:grid; grid-template-columns:76px 1fr; overflow:hidden; }
+    .sidebar { background:rgba(15,23,42,.96); border-left:1px solid rgba(148,163,184,.12); display:flex; flex-direction:column; align-items:center; padding:14px 0; gap:10px; }
+    .side-btn { width:42px; height:42px; border-radius:13px; display:grid; place-items:center; color:#cbd5e1; border:1px solid transparent; background:transparent; cursor:pointer; }
+    .side-btn:hover, .side-btn.active { color:#60a5fa; background:rgba(59,130,246,.12); border-color:rgba(59,130,246,.22); }
+    .main { min-width:0; display:grid; grid-template-rows:64px 88px 50px 1fr 170px; gap:12px; padding:12px; overflow:hidden; }
+    .panel { min-width:0; background:rgba(15,23,42,.88); border:1px solid rgba(148,163,184,.14); border-radius:18px; box-shadow:0 10px 30px rgba(0,0,0,.18); backdrop-filter:blur(10px); }
+    .topbar { display:flex; align-items:center; justify-content:space-between; padding:0 16px; overflow:hidden; }
+    .kpis { display:grid; grid-template-columns:repeat(6, minmax(0, 1fr)); gap:10px; overflow:hidden; }
+    .kpi { position:relative; overflow:hidden; padding:12px 14px; border-radius:16px; cursor:pointer; }
+    .kpi:after { content:""; position:absolute; left:0; right:0; bottom:0; height:3px; background:currentColor; opacity:.9; }
+    .kpi-label { font-size:11px; color:#94a3b8; margin-bottom:8px; white-space:nowrap; }
+    .kpi-value { font-size:26px; line-height:1; font-weight:800; color:#fff; }
+    .filters { display:grid; grid-template-columns:repeat(4, minmax(0, 1fr)) auto; gap:8px; align-items:center; }
+    .input, .select, .btn { height:38px; width:100%; border-radius:12px; border:1px solid #334155; background:rgba(2,6,23,.72); color:#e5e7eb; font-size:13px; outline:none; }
+    .input, .select { padding:0 12px; }
+    .btn { padding:0 14px; cursor:pointer; background:rgba(15,23,42,.92); }
+    .btn:hover { border-color:#475569; background:rgba(30,41,59,.95); }
+    .content { min-height:0; display:grid; grid-template-columns:1.55fr .9fr; gap:12px; overflow:hidden; }
+    .left-grid { min-width:0; display:grid; grid-template-rows:1.35fr .95fr; gap:12px; overflow:hidden; }
+    .chart-panel { min-width:0; display:grid; grid-template-rows:42px 1fr; padding:12px; overflow:hidden; }
+    .sub-grid { min-width:0; display:grid; grid-template-columns:1fr 1fr; gap:12px; overflow:hidden; }
+    .box { min-width:0; padding:12px; overflow:hidden; }
+    .title { font-size:13px; font-weight:700; color:#e2e8f0; }
+    .subtitle { font-size:11px; color:#94a3b8; }
+    .loading { display:inline-flex; align-items:center; gap:8px; font-size:12px; color:#cbd5e1; }
+    .spinner { width:14px; height:14px; border:2px solid rgba(148,163,184,.25); border-top-color:#38bdf8; border-radius:50%; animation:spin .8s linear infinite; }
+    @keyframes spin { to { transform:rotate(360deg); } }
+    .list { margin:0; padding:0; list-style:none; overflow:hidden; }
+    .list li { display:flex; justify-content:space-between; gap:10px; padding:8px 0; border-bottom:1px solid rgba(148,163,184,.10); font-size:12px; }
+    .badge, .clickable-badge { display:inline-flex; align-items:center; gap:6px; padding:4px 8px; border-radius:999px; font-size:11px; border:1px solid rgba(148,163,184,.16); background:rgba(2,6,23,.45); color:#dbeafe; white-space:nowrap; cursor:pointer; }
+    .sev-high { color:#fca5a5; } .sev-med { color:#fdba74; } .sev-low { color:#86efac; }
+    .table-wrap { overflow:hidden; display:grid; grid-template-rows:36px 1fr; padding:12px; }
+    table { width:100%; border-collapse:collapse; table-layout:fixed; font-size:12px; }
+    th, td { padding:10px 8px; border-bottom:1px solid rgba(148,163,184,.10); text-align:right; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    th { color:#94a3b8; font-size:11px; text-transform:uppercase; letter-spacing:.04em; }
+    .chart-box { position:relative; min-height:0; height:100%; }
+    canvas { width:100% !important; height:100% !important; }
+    .heatmap { display:grid; grid-template-columns:70px repeat(6, 1fr); gap:6px; align-items:stretch; overflow:hidden; font-size:11px; }
+    .heat-head { color:#94a3b8; text-align:center; padding:4px 0; }
+    .heat-label { display:flex; align-items:center; justify-content:flex-end; color:#cbd5e1; padding-left:4px; white-space:nowrap; }
+    .heat-cell { border-radius:10px; min-height:28px; border:1px solid rgba(148,163,184,.08); }
+    .mild { background:rgba(59,130,246,.14); } .mid { background:rgba(249,115,22,.24); } .high { background:rgba(239,68,68,.28); } .max { background:rgba(168,85,247,.35); }
+    .mitre-grid { display:grid; grid-template-columns:1fr; gap:8px; overflow:hidden; }
+    .mitre-item { padding:9px 10px; border-radius:12px; border:1px solid rgba(148,163,184,.12); background:rgba(2,6,23,.35); display:flex; justify-content:space-between; gap:10px; align-items:center; font-size:12px; }
+    .click-row { cursor:pointer; }
+    .click-row:hover td { background:rgba(59,130,246,.06); }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="w-11 h-11 rounded-xl grid place-items-center bg-slate-800/80 border border-slate-700">◆</div>
+      <button class="side-btn active" onclick="goHome()">⌂</button>
+      <button class="side-btn" onclick="loadView('logs')">▤</button>
+      <button class="side-btn" onclick="loadView('alerts')">◔</button>
+      <button class="side-btn" onclick="loadView('threats')">⚑</button>
+      <button class="side-btn" onclick="loadView('settings')">⛭</button>
+    </aside>
+
+    <main class="main">
+      <header class="panel topbar">
+        <div>
+          <div class="text-base font-semibold">SOC Security Dashboard</div>
+          <div class="text-xs text-slate-400">Last updated: <span id="last-updated">—</span></div>
+        </div>
+        <div class="flex items-center gap-2">
+          <span id="refresh-state" class="loading" style="display:none"><span class="spinner"></span>Refreshing</span>
+          <span class="badge">Live</span>
+          <span class="badge">24 hrs</span>
+        </div>
+      </header>
+
+      <section class="kpis">
+        <div class="panel kpi text-sky-400" onclick="setQuickFilter('','', '', '')"><div class="kpi-label">Logs usage</div><div id="stat-logs" class="kpi-value">0</div></div>
+        <div class="panel kpi text-emerald-400" onclick="loadMetric('metrics')"><div class="kpi-label">Metrics usage</div><div class="kpi-value">97K</div></div>
+        <div class="panel kpi text-amber-400" onclick="loadMetric('spans')"><div class="kpi-label">Spans usage</div><div class="kpi-value">128K</div></div>
+        <div class="panel kpi text-fuchsia-400" onclick="loadMetric('alerts')"><div class="kpi-label">Alerts</div><div id="stat-alerts" class="kpi-value">0</div></div>
+        <div class="panel kpi text-red-400" onclick="setQuickFilter('', '', '', 'high')"><div class="kpi-label">Exceptions</div><div class="kpi-value">56</div></div>
+        <div class="panel kpi text-emerald-300" onclick="loadMetric('insights')"><div class="kpi-label">Insights</div><div class="kpi-value">10</div></div>
+      </section>
+
+      <section class="panel box">
+        <div class="filters">
+          <select id="filter-severity" class="select">
+            <option value="">All Severities</option>
+            <option value="critical">Critical</option>
+            <option value="high">High</option>
+            <option value="medium">Medium</option>
+            <option value="low">Low</option>
+          </select>
+          <input id="filter-ip" class="input" placeholder="Filter by Source IP" />
+          <input id="filter-user" class="input" placeholder="Filter by User" />
+          <input id="filter-host" class="input" placeholder="Filter by Host" />
+          <button id="apply-filters" class="btn">Apply</button>
+        </div>
+      </section>
+
+      <section class="content">
+        <div class="left-grid">
+          <div class="panel chart-panel">
+            <div class="flex items-center justify-between mb-2">
+              <div>
+                <div class="title">Security activity overview</div>
+                <div class="subtitle">Events, alerts and anomalies over time</div>
+              </div>
+              <div class="flex gap-2">
+                <span class="badge">Threats</span>
+                <span class="badge">Logs</span>
+                <span class="badge">Alerts</span>
+              </div>
+            </div>
+            <div class="chart-box"><canvas id="mainChart"></canvas></div>
+          </div>
+
+          <div class="sub-grid">
+            <div class="panel box">
+              <div class="flex items-center justify-between mb-2">
+                <div>
+                  <div class="title">Heatmap of abnormal activity</div>
+                  <div class="subtitle">Hotspots by hour and severity</div>
+                </div>
+              </div>
+              <div class="heatmap mt-2" id="heatmap">
+                <div></div>
+                <div class="heat-head">00</div><div class="heat-head">04</div><div class="heat-head">08</div><div class="heat-head">12</div><div class="heat-head">16</div><div class="heat-head">20</div>
+              </div>
+            </div>
+
+            <div class="panel box">
+              <div class="title mb-2">MITRE ATT&CK mapping</div>
+              <div class="subtitle mb-3">Observed technique coverage</div>
+              <div class="mitre-grid" id="mitre-map"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel box min-w-0 overflow-hidden">
+          <div class="title mb-1">Top IPs</div>
+          <div class="subtitle mb-3">Highest activity sources</div>
+          <ul class="list mb-4" id="top-ips"></ul>
+
+          <div class="title mb-1">Top Users</div>
+          <div class="subtitle mb-3">Most active identities</div>
+          <ul class="list mb-4" id="top-users"></ul>
+
+          <div class="title mb-1">Recent signals</div>
+          <div class="subtitle mb-3">Latest notable events</div>
+          <ul class="list" id="recent-signals"></ul>
+        </div>
+      </section>
+
+      <section class="panel table-wrap">
+        <div class="flex items-center justify-between mb-2">
+          <div>
+            <div class="title">Recent events</div>
+            <div class="subtitle">Latest security-related activity from the platform</div>
+          </div>
+          <button class="btn" style="width:140px" onclick="manualRefresh()">Investigate</button>
+        </div>
+        <div style="overflow:hidden">
+          <table>
+            <thead>
+              <tr>
+                <th>Event type</th>
+                <th>Host</th>
+                <th>User</th>
+                <th>Source IP</th>
+                <th>Severity</th>
+                <th>Count</th>
+                <th>Last triggered</th>
+              </tr>
+            </thead>
+            <tbody id="logs-table"></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script>
+    let allEvents = [];
+    let chart;
+
+    function goHome() { console.log('home'); }
+    function loadView(name) { console.log('load view', name); }
+    function loadMetric(name) { console.log('load metric', name); }
+
+    function setQuickFilter(host = '', user = '', ip = '', severity = '') {
+      document.getElementById('filter-host').value = host;
+      document.getElementById('filter-user').value = user;
+      document.getElementById('filter-ip').value = ip;
+      document.getElementById('filter-severity').value = severity;
+      applyFilters();
+    }
+
+    function manualRefresh() {
+      updateDashboard(true);
+    }
+
+    const chartCtx = document.getElementById('mainChart').getContext('2d');
+    chart = new Chart(chartCtx, {
+      type: 'line',
+      data: {
+        labels: ['00:00','04:00','08:00','12:00','16:00','20:00','24:00'],
+        datasets: [
+          { label: 'Logs', data: [120,180,150,210,170,230,200], borderColor: '#38bdf8', backgroundColor: 'rgba(56,189,248,.14)', fill: true, tension: .38, pointRadius: 0, borderWidth: 2 },
+          { label: 'Alerts', data: [18,26,22,31,28,35,29], borderColor: '#f97316', backgroundColor: 'rgba(249,115,22,.10)', fill: true, tension: .38, pointRadius: 0, borderWidth: 2 },
+          { label: 'Anomalies', data: [8,12,10,15,13,18,14], borderColor: '#a855f7', backgroundColor: 'rgba(168,85,247,.10)', fill: true, tension: .38, pointRadius: 0, borderWidth: 2 }
+        ]
+      },
+      options: {
+        maintainAspectRatio: false,
+        responsive: true,
+        interaction: { mode: 'index', intersect: false },
+        plugins: {
+          legend: { position: 'top', align: 'end', labels: { color: '#cbd5e1', usePointStyle: true, boxWidth: 8 } },
+          tooltip: { backgroundColor: 'rgba(15,23,42,.96)', borderColor: 'rgba(148,163,184,.2)', borderWidth: 1, titleColor: '#fff', bodyColor: '#e2e8f0' }
+        },
+        scales: {
+          x: { grid: { color: 'rgba(148,163,184,.08)' }, ticks: { color: '#94a3b8' } },
+          y: { grid: { color: 'rgba(148,163,184,.08)' }, ticks: { color: '#94a3b8' } }
+        }
+      }
+    });
+
+    function sevColor(sev) {
+      const s = String(sev || '').toLowerCase();
+      if (s.includes('critical') || s.includes('high')) return 'sev-high';
+      if (s.includes('medium')) return 'sev-med';
+      return 'sev-low';
+    }
+
+    function renderHeatmap() {
+      const rows = [
+        ['Auth', [1,2,2,3,4,2]],
+        ['Endpoint', [0,1,2,4,5,3]],
+        ['Network', [1,1,3,4,4,2]],
+        ['Privilege', [0,1,2,2,4,5]],
+        ['Malware', [0,0,1,2,3,4]]
+      ];
+      const el = document.getElementById('heatmap');
+      el.innerHTML = '<div></div><div class="heat-head">00</div><div class="heat-head">04</div><div class="heat-head">08</div><div class="heat-head">12</div><div class="heat-head">16</div><div class="heat-head">20</div>';
+      rows.forEach(([label, vals]) => {
+        const labelNode = document.createElement('div');
+        labelNode.className = 'heat-label';
+        labelNode.textContent = label;
+        el.appendChild(labelNode);
+        vals.forEach(v => {
+          const c = document.createElement('div');
+          c.className = 'heat-cell ' + (v <= 1 ? 'mild' : v <= 2 ? 'mid' : v <= 4 ? 'high' : 'max');
+          c.style.opacity = (0.25 + (v / 5) * 0.75).toFixed(2);
+          c.title = `${label} ${v}`;
+          el.appendChild(c);
+        });
+      });
+    }
+
+    function renderCards() {
+      document.getElementById('top-ips').innerHTML = [
+        ['10.10.4.18', 182],
+        ['10.10.8.22', 144],
+        ['172.16.2.9', 117],
+        ['192.168.1.77', 93]
+      ].map(([ip, count]) => `<li><button class="clickable-badge" onclick="setQuickFilter('','','${ip}','')">${ip}</button><span class="text-sky-300">${count}</span></li>`).join('');
+
+      document.getElementById('top-users').innerHTML = [
+        ['admin', 64],
+        ['svc-backup', 51],
+        ['helpdesk', 38],
+        ['john.doe', 29]
+      ].map(([user, count]) => `<li><button class="clickable-badge" onclick="setQuickFilter('','${user}','','')">${user}</button><span class="text-emerald-300">${count}</span></li>`).join('');
+
+      document.getElementById('mitre-map').innerHTML = [
+        ['T1110 Brute Force', '12 events'],
+        ['T1059 Command Shell', '9 events'],
+        ['T1078 Valid Accounts', '8 events'],
+        ['T1046 Network Discovery', '6 events']
+      ].map(([tech, count]) => `<div class="mitre-item" onclick="console.log('${tech}')"><span>${tech}</span><span class="badge">${count}</span></div>`).join('');
+    }
+
+    function renderSignals(events) {
+      document.getElementById('recent-signals').innerHTML = (events || []).slice(0, 4).map(e => `
+        <li class="click-row" onclick="setQuickFilter('${e.host || ''}','${e.user || ''}','${e.source_ip || ''}','${(e.severity || '').toLowerCase()}')">
+          <span>${e.action || 'Login'}</span>
+          <span class="${sevColor(e.severity)}">${e.severity || 'High'}</span>
+        </li>
+      `).join('');
+    }
+
+    function filterEvents(events) {
+      const host = document.getElementById('filter-host').value.trim().toLowerCase();
+      const user = document.getElementById('filter-user').value.trim().toLowerCase();
+      const ip = document.getElementById('filter-ip').value.trim().toLowerCase();
+      const severity = document.getElementById('filter-severity').value.trim().toLowerCase();
+
+      return (events || []).filter(e => {
+        const eh = String(e.host || '').toLowerCase();
+        const eu = String(e.user || '').toLowerCase();
+        const ei = String(e.source_ip || '').toLowerCase();
+        const es = String(e.severity || '').toLowerCase();
+        return (!host || eh.includes(host)) &&
+               (!user || eu.includes(user)) &&
+               (!ip || ei.includes(ip)) &&
+               (!severity || es.includes(severity));
+      });
+    }
+
+    function applyFilters() {
+      renderTable(filterEvents(allEvents));
+      renderSignals(filterEvents(allEvents));
+    }
+
+    function renderTable(events) {
+      document.getElementById('logs-table').innerHTML = (events || []).slice(0, 12).map(l => {
+        const time = l.timestamp ? l.timestamp.replace('T', ' ').slice(11,19) : '10:16:52';
+        return `
+          <tr class="click-row" onclick="setQuickFilter('${l.host || ''}','${l.user || ''}','${l.source_ip || ''}','${(l.severity || '').toLowerCase()}')">
+            <td>${l.action || 'Login'}</td>
+            <td>${l.host || 'srv-01'}</td>
+            <td>${l.user || 'unknown'}</td>
+            <td>${l.source_ip || '10.10.4.18'}</td>
+            <td class="${sevColor(l.severity)}">${l.severity || 'High'}</td>
+            <td>${l.count ?? 1}</td>
+            <td class="text-slate-400">${time}</td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    async function updateDashboard(force = false) {
+      const refresh = document.getElementById('refresh-state');
+      refresh.style.display = 'inline-flex';
+      try {
+        const [statsRes, logsRes] = await Promise.all([
+          fetch('/stats'),
+          fetch('/events')
+        ]);
+        const stats = await statsRes.json();
+        const logs = await logsRes.json();
+        allEvents = Array.isArray(logs) ? logs : [];
+
+        document.getElementById('stat-logs').innerText = stats.total_events ?? 0;
+        document.getElementById('stat-alerts').innerText = stats.critical_alerts ?? 0;
+        document.getElementById('last-updated').innerText = new Date().toLocaleString('he-IL');
+
+        renderTable(filterEvents(allEvents));
+        renderSignals(filterEvents(allEvents));
+      } catch (e) {
+        document.getElementById('last-updated').innerText = 'fetch error';
+      } finally {
+        refresh.style.display = 'none';
+      }
+    }
+
+    document.getElementById('apply-filters').addEventListener('click', applyFilters);
+
+    renderHeatmap();
+    renderCards();
+    updateDashboard();
+    setInterval(updateDashboard, 5000);
+  </script>
+</body>
+</html>
