@@ -1,44 +1,36 @@
+from http.server import BaseHTTPRequestHandler
+import json
 import os
 import psycopg2
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+from engine import analyze_event
 
-app = FastAPI()
+# חיבור לבסיס הנתונים Neon
+DATABASE_URL = os.environ.get("DATABASE_URL")
 
-# פונקציית עזר להתחברות ל-DB
-def get_db_connection():
-    # ה-DATABASE_URL יוגדר ב-Vercel ב-Settings -> Environment Variables
-    conn = psycopg2.connect(os.environ["DATABASE_URL"])
-    return conn
+class handler(BaseHTTPRequestHandler):
+    def do_POST(self):
+        content_length = int(self.headers['Content-Length'])
+        post_data = self.rfile.read(content_length)
+        event = json.loads(post_data)
 
-class Event(BaseModel):
-    user: str
-    action: str
-    source: str
-    ip: str
+        # ניתוח האירוע בעזרת ה-Engine שלך
+        analysis = analyze_event(event)
 
-@app.post("/api/event")
-def create_event(e: Event):
-    try:
-        conn = get_db_connection()
-        cur = conn.cursor()
-        cur.execute(
-            "INSERT INTO events (user_name, action, source, ip) VALUES (%s, %s, %s, %s)",
-            (e.user, e.action, e.source, e.ip)
-        )
-        conn.commit()
-        cur.close()
-        conn.close()
-        return {"status": "ok"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        # שמירה ב-Neon
+        try:
+            conn = psycopg2.connect(DATABASE_URL)
+            cur = conn.cursor()
+            cur.execute(
+                "INSERT INTO logs (action, user_name, severity, score, description) VALUES (%s, %s, %s, %s, %s)",
+                (event["action"], event["user"], analysis.get("severity", "Low"), analysis["score"], analysis["description"])
+            )
+            conn.commit()
+            cur.close()
+            conn.close()
+        except Exception as e:
+            print(f"Database error: {e}")
 
-@app.get("/api/events")
-def get_events():
-    conn = get_db_connection()
-    cur = conn.cursor()
-    cur.execute("SELECT * FROM events ORDER BY id DESC")
-    rows = cur.fetchall()
-    cur.close()
-    conn.close()
-    return {"data": rows}
+        self.send_response(200)
+        self.send_header('Content-type', 'application/json')
+        self.end_headers()
+        self.wfile.write(json.dumps({"status": "processed", "alert": analysis["alert"]}).encode())
