@@ -1,5 +1,6 @@
-﻿$SIEM_BASE = "https://creatures-nottingham-suitable-salaries.trycloudflare.com"
-$SIEM_EVENT = "$SIEM_BASE/event"
+# עדכן את הכתובת הזו לכתובת האתר האמיתית שלך ב-Vercel
+$SIEM_BASE = "https://soc-enterprise-dashboard-hayanuka.vercel.app"
+$SIEM_EVENT = "$SIEM_BASE/api" # שינינו ל-/api כדי שיתאים ל-Vercel
 $logPath = "D:\Cyber\soc-system\agent_log.txt"
 
 "Agent Started at $(Get-Date)" | Out-File $logPath -Append
@@ -16,16 +17,26 @@ while ($true) {
                     $xml = [xml]$log.ToXml()
                     $eventID = $log.Id
                     $targetUser = "System"
-                    $action = "event_$eventID"
                     
-                    if ($eventID -eq 4625 -or $eventID -eq 4624) {
+                    # מיפוי פעולות בהתאם ל-engine.py שלך
+                    $action = switch ($eventID) {
+                        4625 { "login_failed" }
+                        4624 { "login_success" }
+                        4720 { "user_created" }
+                        1102 { "audit_log_cleared" }
+                        4663 { "file_permission_denied" }
+                        Default { "event_$eventID" }
+                    }
+
+                    if ($eventID -eq 4625 -or $eventID -eq 4624 -or $eventID -eq 4720) {
                         $targetUser = ($xml.Event.EventData.Data | Where-Object { $_.Name -eq "TargetUserName" }).'#text'
-                        $action = if($eventID -eq 4625) {"login_failed"} else {"login_success"}
                     }
                     
-                    $json = @{ user = $targetUser; action = $action; source = $env:COMPUTERNAME } | ConvertTo-Json
-                    Invoke-RestMethod -Uri $SIEM_EVENT -Method Post -Body $json -ContentType "application/json" -TimeoutSec 3
-                    "Sent Event $eventID at $(Get-Date)" | Out-File $logPath -Append
+                    $json = @{ user = $targetUser; action = $action; source = $env:COMPUTERNAME } | ConvertTo-Json -Compress
+                    
+                    # שליחה ל-Vercel
+                    Invoke-RestMethod -Uri $SIEM_EVENT -Method Post -Body $json -ContentType "application/json" -TimeoutSec 5
+                    "Sent Event $action for $targetUser at $(Get-Date)" | Out-File $logPath -Append
                 } catch { "Event processing error: $($_.Exception.Message)" | Out-File $logPath -Append }
             }
         }
