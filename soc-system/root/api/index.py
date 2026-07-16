@@ -256,7 +256,7 @@ def get_stats():
         WHERE ip IS NOT NULL GROUP BY ip ORDER BY c DESC LIMIT 5
         """
     )
-    top_ips = cur.fetchall()
+    top_ips = [{"ip": row[0], "c": row[1]} for row in cur.fetchall()]
 
     cur.execute(
         """
@@ -264,7 +264,7 @@ def get_stats():
         WHERE user_name IS NOT NULL GROUP BY user_name ORDER BY c DESC LIMIT 5
         """
     )
-    top_users = cur.fetchall()
+    top_users = [{"user_name": row[0], "c": row[1]} for row in cur.fetchall()]
 
     # נתונים לגרף הראשי + heatmap - 24 שעות אחרונות, 6 חלונות של 4 שעות
     cur.execute(
