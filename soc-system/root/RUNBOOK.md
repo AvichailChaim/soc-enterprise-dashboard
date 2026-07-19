@@ -98,6 +98,18 @@ Invoke-RestMethod -Uri "https://soc-enterprise-dashboard-hayanuka.vercel.app/api
 
 `api/backend/*` (מנוע מקומי עם SQLite), `api/send.ps1`, `api/run.bat` הם גרסאות פיתוח מוקדמות שהוחלפו ע"י `api/index.py` המאוחד. אפשר להשאיר לעת עתה, אך מומלץ להסיר אחרי שווידאת שה-agent החדש עובד בייצור, כדי למנוע בלבול עתידי.
 
+## 8.1 הגנה מפני הסרה/עצירה ללא אישור (מ-install.ps1)
+
+מ-`install.ps1` הנוכחי, כל התקנה חדשה (או ריצה חוזרת ללא `-NoProtect`) עושה אוטומטית:
+
+1. **הקשחת הרשאות השירות** (`sc sdset`) — כך שרק `NT AUTHORITY\SYSTEM` יכול לעצור/למחוק/לשנות את השירות. מנהל מערכת רגיל שינסה `Stop-Service`, `sc stop`/`sc delete`, `nssm stop`/`nssm remove`, או Services.msc יקבל "Access is denied".
+2. **סיסמת הסרה** — אם מריצים עם `-UninstallPassword "סיסמה"`, נשמר hash (SHA-256) בקובץ `C:\Hayanuka_SIEM\uninstall.hash`. בלי הסיסמה הנכונה, גם `install.ps1` (להתקנה מחדש) וגם `uninstall.ps1` (להסרה מלאה) יסרבו לפעול.
+3. **Watchdog** — Scheduled Task בשם `Hayanuka_SIEM_Watchdog` שרץ כ-SYSTEM כל 5 דקות; אם השירות נעלם/נעצר בלי לעבור דרך `uninstall.ps1`/`install.ps1` הרשמיים, הוא משחזר אותו אוטומטית **ושולח התראת Critical לדשבורד** (`agent_tamper_detected`).
+
+**איך מסירים לגמרי:** מריצים כ-Administrator בתחנה עצמה: `.\uninstall.ps1` (מבקש את הסיסמה). **איך מתקינים מחדש/מעדכנים** התקנה מוגנת קיימת: `.\install.ps1 -UninstallPassword "הסיסמה" [-AgentToken "..."]`.
+
+**חשוב להבין את המגבלה:** זו הגנה תוכנתית ברמת Windows service ACL, לא דרייבר מוגן ברמת הליבה. מנהל מערכת מקומי מיומן שמכיר לעומק פנימיות של הרשאות שירותים ב-Windows יכול תיאורטית עדיין לעקוף אותה. ההגנה חוסמת בפועל את כל דרכי ההסרה/העצירה הרגילות והנפוצות (כולל ניסיון מזדמן של משתמש קצה או IT-איש שלא מכיר את המנגנון), אבל היא לא תחליף להגנת endpoint ברמה ארגונית (EDR/Tamper Protection) אם נדרשת הגנה מוחלטת.
+
 ## 9. תקלות ידועות — השירות עולה ל-Paused ולא רץ
 
 היו שני גורמים שונים שגרמו לאותו תסמין (`Hayanuka_SIEM_Agent` עולה ל-Paused, ב-Event Viewer רואים "ran for less than 15000 milliseconds" עם קוד יציאה סינתטי כמו `4294770688`):
