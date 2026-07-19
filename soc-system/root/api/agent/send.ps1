@@ -18,6 +18,7 @@ if (!(Test-Path $installDir)) { New-Item -ItemType Directory -Path $installDir -
 
 $lastCheckSecurity = (Get-Date).AddMinutes(-5)
 $lastCheckSystem   = (Get-Date).AddMinutes(-5)
+$lastCheckDefender = (Get-Date).AddMinutes(-5)
 $loopCount = 0
 
 function Send-SiemEvent {
@@ -140,6 +141,25 @@ while ($true) {
             Send-SiemEvent -user "System" -action "new_service_installed" -source "Service: $serviceName" -ip "127.0.0.1"
         }
     } catch { "System log query error: $($_.Exception.Message)" | Out-File $debugFile -Append }
+
+    # --- Windows Defender log: זיהוי/חסימה של malware-ransomware, וכיבוי הגנה בזמן אמת ---
+    try {
+        $defIds = @(1116,1117,5001,5010,5012)
+        $defFilter = "*[System[( " + (($defIds | ForEach-Object { "(EventID=$_)" }) -join " or ") + " ) and TimeCreated[@SystemTime>='$($lastCheckDefender.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffZ'))']]]"
+        $defEvents = Get-WinEvent -LogName "Microsoft-Windows-Windows Defender/Operational" -FilterXPath $defFilter -ErrorAction SilentlyContinue
+        $lastCheckDefender = Get-Date
+
+        foreach ($log in $defEvents) {
+            $action = switch ($log.Id) {
+                1116 { "malware_detected" }
+                1117 { "malware_blocked" }
+                default { "defender_protection_disabled" }
+            }
+            $msg = $log.Message
+            $shortMsg = if ($msg) { $msg.Substring(0, [Math]::Min(150, $msg.Length)) -replace "[\r\n]+", " " } else { "Windows Defender event $($log.Id)" }
+            Send-SiemEvent -user $env:USERNAME -action $action -source "$($env:COMPUTERNAME): $shortMsg" -ip "127.0.0.1"
+        }
+    } catch { "Defender log query error: $($_.Exception.Message)" | Out-File $debugFile -Append }
 
     Start-Sleep -Seconds 10
 }
