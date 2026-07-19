@@ -20,6 +20,20 @@ if (!(Test-Path $installDir)) {
     New-Item -ItemType Directory -Path $installDir -Force | Out-Null
 }
 
+# --- שלב 0: הפעלת Audit Policies הנדרשות, כדי שהאירועים בכלל ייכתבו ל-Security log ---
+# (הגדרה מקומית לכל מחשב - אם יש לך AD domain, עדיף להגדיר את זה פעם אחת ב-GPO במקום כאן)
+Write-Host "[*] Enabling required audit policies..." -ForegroundColor Cyan
+try {
+    auditpol /set /subcategory:"Logon" /success:enable /failure:enable | Out-Null
+    auditpol /set /subcategory:"Account Lockout" /success:enable /failure:enable | Out-Null
+    auditpol /set /subcategory:"User Account Management" /success:enable /failure:enable | Out-Null
+    auditpol /set /subcategory:"Security State Change" /success:enable /failure:enable | Out-Null
+    auditpol /set /subcategory:"Other Object Access Events" /success:enable /failure:enable | Out-Null
+    Write-Host "[+] Audit policies enabled." -ForegroundColor Green
+} catch {
+    Write-Host "[!] Failed to set audit policies (need Administrator): $($_.Exception.Message)" -ForegroundColor Yellow
+}
+
 # --- שלב 1: nssm.exe ---
 Write-Host "[*] Looking for nssm.exe..." -ForegroundColor Cyan
 if (Test-Path $localNssm) {
