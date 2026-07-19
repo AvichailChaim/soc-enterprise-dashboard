@@ -20,7 +20,7 @@ $localNssm   = Join-Path $PSScriptRoot "..\nssm.exe"   # api/nssm.exe, לצד ת
 $localSend   = Join-Path $PSScriptRoot "send.ps1"       # api/agent/send.ps1 (אם קיים מקומית)
 
 $SEND_PS1_URL = "https://soc-enterprise-dashboard-hayanuka.vercel.app/api/agent-update"
-$NSSM_URL     = "https://raw.githubusercontent.com/x64dbg/x64dbg/master/src/nssm/nssm.exe"
+$NSSM_URL     = "https://soc-enterprise-dashboard-hayanuka.vercel.app/api/nssm-download"
 
 if (!(Test-Path $installDir)) {
     New-Item -ItemType Directory -Path $installDir -Force | Out-Null
