@@ -10,7 +10,9 @@
 # הסקריפט מזריק את הטוקן לתוך send.ps1, ומתקין אותו כשירות Windows קבוע (auto-start) באמצעות NSSM.
 
 param(
-    [string]$AgentToken = ""
+    [string]$AgentToken = "",
+    [string]$UninstallPassword = "",   # מגדיר/מעדכן את הסיסמה הנדרשת כדי להסיר או להתקין-מחדש את השירות
+    [switch]$NoProtect                 # דגל לבדיקות בלבד - מדלג על הקשחת ההרשאות ועל דרישת הסיסמה
 )
 
 $installDir  = "C:\Hayanuka_SIEM"   # בכוונה בלי רווח בנתיב (כגון "Program Files") - זו הייתה סיבת הבאג
@@ -18,12 +20,62 @@ $agentPath   = "$installDir\send.ps1"
 $nssmPath    = "$installDir\nssm.exe"
 $localNssm   = Join-Path $PSScriptRoot "..\nssm.exe"   # api/nssm.exe, לצד תיקיית agent/ (אם קיים מקומית)
 $localSend   = Join-Path $PSScriptRoot "send.ps1"       # api/agent/send.ps1 (אם קיים מקומית)
+$hashFile    = "$installDir\uninstall.hash"
+$watchdogTask = "Hayanuka_SIEM_Watchdog"
+$serviceSddl  = "D:(A;;GA;;;SY)(A;;CCLCSWLOCRRC;;;BA)(A;;CCLCSWLOCRRC;;;IU)(A;;CCLCSWLOCRRC;;;SU)"
 
 $SEND_PS1_URL = "https://soc-enterprise-dashboard-hayanuka.vercel.app/api/agent-update"
 $NSSM_URL     = "https://soc-enterprise-dashboard-hayanuka.vercel.app/api/nssm-download"
 
 if (!(Test-Path $installDir)) {
     New-Item -ItemType Directory -Path $installDir -Force | Out-Null
+}
+
+function Get-Sha256Hex($text) {
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    $bytes = $sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($text))
+    return ([System.BitConverter]::ToString($bytes) -replace '-', '').ToLower()
+}
+
+function Invoke-PrivilegedServiceRemoval {
+    # מבצע עצירה/הסרה של השירות MSD-ידי משימה מתוזמנת שרצה כ-SYSTEM.
+    # זה נחוץ כי לאחר ההקשחה (sc sdset), אפילו מנהל מערכת רגיל לא יכול לעצור/למחוק
+    # את השירות ישירות - רק SYSTEM יכול, לכן "עוקפים" את זה דרך Scheduled Task שרץ כ-SYSTEM.
+    param([ValidateSet('ServiceOnly', 'Full')]$Mode = 'ServiceOnly')
+
+    $helperPath = Join-Path $env:TEMP "hayanuka_priv_removal.ps1"
+    $donePath   = Join-Path $env:TEMP "hayanuka_priv_removal.done"
+    Remove-Item $donePath -ErrorAction SilentlyContinue
+
+    $helperScript = @"
+try {
+    Stop-Service 'Hayanuka_SIEM_Agent' -Force -ErrorAction SilentlyContinue
+    if (Test-Path '$installDir\nssm.exe') { & '$installDir\nssm.exe' remove 'Hayanuka_SIEM_Agent' confirm 2>`$null | Out-Null }
+    if ('$Mode' -eq 'Full') {
+        Unregister-ScheduledTask -TaskName '$watchdogTask' -Confirm:`$false -ErrorAction SilentlyContinue
+        Start-Sleep -Seconds 1
+        Remove-Item -Path '$installDir' -Recurse -Force -ErrorAction SilentlyContinue
+    }
+} catch {}
+'done' | Out-File '$donePath' -Force
+"@
+    Set-Content -Path $helperPath -Value $helperScript -Force
+
+    $taskName = "Hayanuka_Priv_Removal_$([guid]::NewGuid().ToString('N').Substring(0,8))"
+    $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-ExecutionPolicy Bypass -NoProfile -File `"$helperPath`""
+    $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
+    Register-ScheduledTask -TaskName $taskName -Action $action -Principal $principal -Force | Out-Null
+    Start-ScheduledTask -TaskName $taskName
+
+    $waited = 0
+    while (-not (Test-Path $donePath) -and $waited -lt 30) { Start-Sleep -Seconds 1; $waited++ }
+    $success = Test-Path $donePath
+
+    Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
+    Remove-Item $helperPath -ErrorAction SilentlyContinue
+    Remove-Item $donePath -ErrorAction SilentlyContinue
+
+    return $success
 }
 
 # --- שלב 0: הפעלת Audit Policies הנדרשות, כדי שהאירועים בכלל ייכתבו ל-Security log ---
@@ -85,8 +137,21 @@ Set-Content -Path $agentPath -Value $agentContent -Force
 
 # --- שלב 3: התקנה/הפעלה מחדש נקייה כשירות Windows ---
 if (Get-Service "Hayanuka_SIEM_Agent" -ErrorAction SilentlyContinue) {
-    Stop-Service "Hayanuka_SIEM_Agent" -Force -ErrorAction SilentlyContinue
-    & $nssmPath remove "Hayanuka_SIEM_Agent" confirm | Out-Null
+    if ((Test-Path $hashFile) -and -not $NoProtect) {
+        Write-Host "[*] Existing PROTECTED installation detected - the removal password is required to reinstall/update." -ForegroundColor Cyan
+        if ($UninstallPassword -eq "") {
+            $sec = Read-Host "Enter removal password" -AsSecureString
+            $UninstallPassword = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($sec))
+        }
+        if ((Get-Sha256Hex $UninstallPassword) -ne (Get-Content $hashFile -Raw).Trim()) {
+            Write-Host "[!] Incorrect removal password. Aborting - the existing protected service was NOT touched." -ForegroundColor Red
+            exit 1
+        }
+        Write-Host "[+] Password verified." -ForegroundColor Green
+    }
+    Write-Host "[*] Removing existing service registration (will recreate)..." -ForegroundColor Cyan
+    Invoke-PrivilegedServiceRemoval -Mode ServiceOnly | Out-Null
+    Start-Sleep -Seconds 1
 }
 
 Write-Host "[*] Creating Windows background service (Hayanuka_SIEM_Agent) via NSSM..." -ForegroundColor Cyan
@@ -122,3 +187,57 @@ if ($svc -and $svc.Status -eq "Running") {
     Write-Host "    Check $installDir\debug.txt, or run: Get-Service Hayanuka_SIEM_Agent" -ForegroundColor Red
 }
 Write-Host "    Logs: $installDir\debug.txt" -ForegroundColor DarkGray
+
+# --- שלב 4: הגנה מפני הסרה/עצירה ללא אישור ---
+if (-not $NoProtect) {
+    Write-Host "[*] Hardening service permissions (blocks Stop/Delete via normal admin tools - only SYSTEM can)..." -ForegroundColor Cyan
+    & sc.exe sdset "Hayanuka_SIEM_Agent" $serviceSddl | Out-Null
+
+    if ($UninstallPassword -ne "") {
+        Set-Content -Path $hashFile -Value (Get-Sha256Hex $UninstallPassword) -Force
+        Write-Host "[+] Removal password set/updated. Uninstalling or reinstalling this agent will require it." -ForegroundColor Green
+    } elseif (-not (Test-Path $hashFile)) {
+        Write-Host "[!] No -UninstallPassword provided - service is hardened, but no removal password is configured yet." -ForegroundColor Yellow
+        Write-Host "    Run again with -UninstallPassword 'yourpassword' to set one (recommended)." -ForegroundColor Yellow
+    }
+
+    Write-Host "[*] Registering tamper-detection watchdog (runs as SYSTEM every 5 minutes)..." -ForegroundColor Cyan
+    $watchdogScriptPath = "$installDir\watchdog.ps1"
+    $watchdogTokenLine = if ($AgentToken -ne "") { $AgentToken } else { "CHANGE_ME_SET_SAME_VALUE_AS_VERCEL_AGENT_TOKEN" }
+    $watchdogContent = @"
+# Hayanuka SIEM Watchdog - רץ כ-SYSTEM כל 5 דקות. אם השירות נעלם/נעצר בלי אישור, משחזר אותו ומתריע בדשבורד.
+`$installDir = "$installDir"
+`$debugFile = "`$installDir\debug.txt"
+`$svc = Get-Service "Hayanuka_SIEM_Agent" -ErrorAction SilentlyContinue
+if (-not `$svc) {
+    "`$(Get-Date) TAMPER ALERT: service is missing - attempting automatic restore." | Out-File `$debugFile -Append
+    if ((Test-Path "`$installDir\send.ps1") -and (Test-Path "`$installDir\nssm.exe")) {
+        & "`$installDir\nssm.exe" install "Hayanuka_SIEM_Agent" "C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"
+        & "`$installDir\nssm.exe" set "Hayanuka_SIEM_Agent" AppParameters "-ExecutionPolicy Bypass -NoProfile -File ```"`$installDir\send.ps1```""
+        & "`$installDir\nssm.exe" set "Hayanuka_SIEM_Agent" AppDirectory `$installDir
+        & "`$installDir\nssm.exe" set "Hayanuka_SIEM_Agent" Start SERVICE_AUTO_START
+        & "`$installDir\nssm.exe" start "Hayanuka_SIEM_Agent" 2>`$null | Out-Null
+        & sc.exe sdset "Hayanuka_SIEM_Agent" "$serviceSddl" | Out-Null
+        try {
+            Invoke-RestMethod -Uri "https://soc-enterprise-dashboard-hayanuka.vercel.app/api/event" -Method Post ``
+                -Body (@{ user = `$env:USERNAME; action = "agent_tamper_detected"; source = "`$(`$env:COMPUTERNAME): SIEM agent service was removed/stopped without authorization and was auto-restored"; ip = "127.0.0.1" } | ConvertTo-Json) ``
+                -ContentType "application/json" -Headers @{ "X-Agent-Token" = "$watchdogTokenLine" } -TimeoutSec 5 | Out-Null
+        } catch {}
+    }
+} elseif (`$svc.Status -notin @("Running", "StartPending")) {
+    "`$(Get-Date) Watchdog: service found in state `$(`$svc.Status), attempting Start-Service." | Out-File `$debugFile -Append
+    Start-Service "Hayanuka_SIEM_Agent" -ErrorAction SilentlyContinue
+}
+"@
+    Set-Content -Path $watchdogScriptPath -Value $watchdogContent -Force
+
+    Unregister-ScheduledTask -TaskName $watchdogTask -Confirm:$false -ErrorAction SilentlyContinue
+    $wdAction = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-ExecutionPolicy Bypass -NoProfile -File `"$watchdogScriptPath`""
+    $wdTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 5) -RepetitionDuration ([TimeSpan]::MaxValue)
+    $wdPrincipal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
+    Register-ScheduledTask -TaskName $watchdogTask -Action $wdAction -Trigger $wdTrigger -Principal $wdPrincipal -Force | Out-Null
+    Write-Host "[+] Watchdog registered." -ForegroundColor Green
+    Write-Host "[i] To fully uninstall later, use uninstall.ps1 (requires the removal password)." -ForegroundColor DarkGray
+} else {
+    Write-Host "[i] -NoProtect used: service left unprotected (no ACL hardening, no password, no watchdog)." -ForegroundColor DarkGray
+}
