@@ -43,7 +43,7 @@
     .badge, .clickable-badge { display:inline-flex; align-items:center; gap:6px; padding:4px 8px; border-radius:999px; font-size:11px; border:1px solid rgba(148,163,184,.16); background:rgba(2,6,23,.45); color:#dbeafe; white-space:nowrap; cursor:pointer; }
     .sev-high { color:#fca5a5; } .sev-med { color:#fdba74; } .sev-low { color:#86efac; }
     .table-wrap { display:grid; grid-template-rows:auto 1fr; padding:12px; overflow-x:auto; }
-    table { width:100%; min-width:760px; border-collapse:collapse; font-size:12px; }
+    table { width:100%; min-width:980px; border-collapse:collapse; font-size:12px; }
     th, td { padding:10px 8px; border-bottom:1px solid rgba(148,163,184,.10); text-align:right; white-space:nowrap; }
     th { color:#94a3b8; font-size:11px; text-transform:uppercase; letter-spacing:.04em; }
     .chart-box { position:relative; min-height:0; height:100%; }
@@ -219,8 +219,10 @@
                 <th>Host</th>
                 <th>User</th>
                 <th>Source IP</th>
+                <th>LAN IP</th>
+                <th>WAN IP</th>
                 <th>Severity</th>
-                <th style="width:32%">Reason</th>
+                <th style="width:28%">Reason</th>
                 <th>MITRE</th>
                 <th>Last triggered</th>
                 <th></th>
@@ -284,11 +286,13 @@
           const kv = (k, v) => `<div class="kv-row"><span class="kv-key">${escapeHtml(k)}</span><span>${v ?? '-'}</span></div>`;
           body.innerHTML = `
             ${kv('Event ID', e.id)}
-            ${kv('Time', escapeHtml(e.timestamp))}
+            ${kv('Time', escapeHtml(fmtTime(e.timestamp)))}
             ${kv('Action', escapeHtml(e.action))}
             ${kv('User', escapeHtml(e.user))}
             ${kv('Host', escapeHtml(e.host))}
             ${kv('Source IP', escapeHtml(e.source_ip))}
+            ${kv('LAN IP', escapeHtml(e.lan_ip))}
+            ${kv('WAN IP', escapeHtml(e.wan_ip))}
             ${kv('Severity', `<span class="${sevColor(e.severity)}">${escapeHtml(e.severity || 'Info')}</span>`)}
             ${kv('Score', e.score)}
             ${kv('MITRE technique', escapeHtml(e.mitre || '-'))}
@@ -296,7 +300,7 @@
             <div class="title mt-3 mb-2">Related events (same user / IP / host, ±30min)</div>
             ${related.length ? related.map(r => `
               <div class="related-item">
-                <span>${r.timestamp ? r.timestamp.replace('T',' ').slice(0,19) : ''} — ${escapeHtml(r.action)}</span>
+                <span>${escapeHtml(fmtTime(r.timestamp))} — ${escapeHtml(r.action)}</span>
                 <span class="${sevColor(r.severity)}">${escapeHtml(r.severity || '')}</span>
               </div>`).join('') : '<div class="subtitle">No related events found in this window.</div>'}
           `;
@@ -336,6 +340,15 @@
 
     function escapeHtml(s) {
       return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
+    }
+
+    function fmtTime(ts) {
+      // ה-DB מחזיר זמן ב-UTC - חייבים להמיר לזמן המקומי של הדפדפן, אחרת יש פער שעות
+      // מול "Last updated" (שכבר מוצג נכון בזמן מקומי).
+      if (!ts) return '-';
+      const d = new Date(ts);
+      if (isNaN(d.getTime())) return String(ts);
+      return d.toLocaleString('he-IL', { hour12: false });
     }
 
     function sevColor(sev) {
@@ -433,10 +446,12 @@
 
     function renderTable(events) {
       document.getElementById('logs-table').innerHTML = (events || []).map(l => {
-        const time = l.timestamp ? l.timestamp.replace('T', ' ').slice(0,19) : '-';
+        const time = fmtTime(l.timestamp);
         const host = escapeHtml(l.host || '-');
         const user = escapeHtml(l.user || '-');
         const ip = escapeHtml(l.source_ip || '-');
+        const lanIp = escapeHtml(l.lan_ip || '-');
+        const wanIp = escapeHtml(l.wan_ip || '-');
         const action = escapeHtml(l.action || '-');
         const mitre = escapeHtml(l.mitre || '-');
         const reason = escapeHtml(l.description || 'Normal system activity.');
@@ -448,6 +463,8 @@
             <td onclick="${filterCall}">${host}</td>
             <td onclick="${filterCall}">${user}</td>
             <td onclick="${filterCall}">${ip}</td>
+            <td class="text-slate-400">${lanIp}</td>
+            <td class="text-slate-400">${wanIp}</td>
             <td class="${sevColor(l.severity)}">${escapeHtml(l.severity || '-')}</td>
             <td class="text-slate-300" style="white-space:normal" title="${reason}">${reason}</td>
             <td class="text-slate-400">${mitre}</td>
