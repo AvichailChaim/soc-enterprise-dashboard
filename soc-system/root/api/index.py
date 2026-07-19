@@ -5,7 +5,7 @@ import psycopg2
 import psycopg2.extras
 from fastapi import FastAPI, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import PlainTextResponse, Response
 from pydantic import BaseModel
 
 app = FastAPI()
@@ -410,5 +410,20 @@ def agent_update():
     try:
         with open(path, "r", encoding="utf-8") as f:
             return PlainTextResponse(f.read())
+    except Exception as ex:
+        raise HTTPException(status_code=500, detail=str(ex))
+
+
+@app.get("/api/nssm-download")
+def nssm_download():
+    """endpoint שממנו install.ps1 מוריד את nssm.exe אם הוא לא קיים מקומית -
+    מגיש את הקובץ שכבר נמצא בפריסה (api/nssm.exe), כדי לא להסתמך על מקור חיצוני לא יציב."""
+    path = os.path.join(os.path.dirname(__file__), "nssm.exe")
+    try:
+        with open(path, "rb") as f:
+            data = f.read()
+        return Response(content=data, media_type="application/octet-stream", headers={
+            "Content-Disposition": 'attachment; filename="nssm.exe"'
+        })
     except Exception as ex:
         raise HTTPException(status_code=500, detail=str(ex))
