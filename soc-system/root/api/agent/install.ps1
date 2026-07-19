@@ -205,9 +205,35 @@ if (-not $NoProtect) {
     $watchdogScriptPath = "$installDir\watchdog.ps1"
     $watchdogTokenLine = if ($AgentToken -ne "") { $AgentToken } else { "CHANGE_ME_SET_SAME_VALUE_AS_VERCEL_AGENT_TOKEN" }
     $watchdogContent = @"
-# Hayanuka SIEM Watchdog - רץ כ-SYSTEM כל 5 דקות. אם השירות נעלם/נעצר בלי אישור, משחזר אותו ומתריע בדשבורד.
+# Hayanuka SIEM Watchdog - רץ כ-SYSTEM כל 5 דקות. אם השירות נעלם/נעצר בלי אישור (לא דרך
+# control.ps1/uninstall.ps1 הרשמיים), משחזר אותו אוטומטית ושולח התראת Critical לדשבורד.
 `$installDir = "$installDir"
 `$debugFile = "`$installDir\debug.txt"
+`$maintenanceFile = "`$installDir\maintenance.flag"
+
+function Send-TamperAlert(`$reasonText) {
+    try {
+        Invoke-RestMethod -Uri "https://soc-enterprise-dashboard-hayanuka.vercel.app/api/event" -Method Post ``
+            -Body (@{ user = `$env:USERNAME; action = "agent_tamper_detected"; source = "`$(`$env:COMPUTERNAME): `$reasonText"; ip = "127.0.0.1" } | ConvertTo-Json) ``
+            -ContentType "application/json" -Headers @{ "X-Agent-Token" = "$watchdogTokenLine" } -TimeoutSec 5 | Out-Null
+    } catch {}
+}
+
+# חלון תחזוקה מבוקר-סיסמה (נפתח ע"י control.ps1 -Action Stop) - כל עוד הוא בתוקף, לא משחזרים ולא מתריעים
+`$maintenanceActive = `$false
+if (Test-Path `$maintenanceFile) {
+    try {
+        `$expiry = [datetime]::Parse((Get-Content `$maintenanceFile -Raw).Trim(), `$null, [System.Globalization.DateTimeStyles]::RoundtripKind)
+        if ((Get-Date).ToUniversalTime() -lt `$expiry) { `$maintenanceActive = `$true }
+        else { Remove-Item `$maintenanceFile -ErrorAction SilentlyContinue }
+    } catch { Remove-Item `$maintenanceFile -ErrorAction SilentlyContinue }
+}
+
+if (`$maintenanceActive) {
+    "`$(Get-Date) Watchdog: authorized maintenance window active, skipping checks." | Out-File `$debugFile -Append
+    exit
+}
+
 `$svc = Get-Service "Hayanuka_SIEM_Agent" -ErrorAction SilentlyContinue
 if (-not `$svc) {
     "`$(Get-Date) TAMPER ALERT: service is missing - attempting automatic restore." | Out-File `$debugFile -Append
@@ -218,15 +244,12 @@ if (-not `$svc) {
         & "`$installDir\nssm.exe" set "Hayanuka_SIEM_Agent" Start SERVICE_AUTO_START
         & "`$installDir\nssm.exe" start "Hayanuka_SIEM_Agent" 2>`$null | Out-Null
         & sc.exe sdset "Hayanuka_SIEM_Agent" "$serviceSddl" | Out-Null
-        try {
-            Invoke-RestMethod -Uri "https://soc-enterprise-dashboard-hayanuka.vercel.app/api/event" -Method Post ``
-                -Body (@{ user = `$env:USERNAME; action = "agent_tamper_detected"; source = "`$(`$env:COMPUTERNAME): SIEM agent service was removed/stopped without authorization and was auto-restored"; ip = "127.0.0.1" } | ConvertTo-Json) ``
-                -ContentType "application/json" -Headers @{ "X-Agent-Token" = "$watchdogTokenLine" } -TimeoutSec 5 | Out-Null
-        } catch {}
+        Send-TamperAlert "SIEM agent service was REMOVED without authorization and was auto-restored"
     }
 } elseif (`$svc.Status -notin @("Running", "StartPending")) {
-    "`$(Get-Date) Watchdog: service found in state `$(`$svc.Status), attempting Start-Service." | Out-File `$debugFile -Append
+    "`$(Get-Date) TAMPER ALERT: service found in state `$(`$svc.Status) without an authorized maintenance window - restarting." | Out-File `$debugFile -Append
     Start-Service "Hayanuka_SIEM_Agent" -ErrorAction SilentlyContinue
+    Send-TamperAlert "SIEM agent service was STOPPED without authorization and was auto-restarted"
 }
 "@
     Set-Content -Path $watchdogScriptPath -Value $watchdogContent -Force
