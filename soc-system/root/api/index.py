@@ -3,7 +3,7 @@ from typing import Optional
 
 import psycopg2
 import psycopg2.extras
-from fastapi import FastAPI, HTTPException, Header
+from fastapi import FastAPI, HTTPException, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse, Response
 from pydantic import BaseModel
@@ -48,6 +48,8 @@ def ensure_schema():
         ("severity", "TEXT"),
         ("score", "INTEGER"),
         ("description", "TEXT"),
+        ("lan_ip", "TEXT"),
+        ("wan_ip", "TEXT"),
     ]:
         cur.execute(f"ALTER TABLE events ADD COLUMN IF NOT EXISTS {col} {definition}")
     cur.execute(
@@ -80,6 +82,7 @@ class Event(BaseModel):
     source: Optional[str] = None
     host: Optional[str] = None
     ip: Optional[str] = None
+    lan_ip: Optional[str] = None
 
 
 # מיפוי אירוע -> טכניקת MITRE ATT&CK משוערת, לצורך תצוגה בממשק
@@ -201,20 +204,30 @@ def check_auth(x_agent_token: Optional[str]):
         raise HTTPException(status_code=401, detail="invalid or missing agent token")
 
 
+def get_wan_ip(request: Request) -> Optional[str]:
+    """ה-WAN IP האמיתי נלקח מהבקשה עצמה בצד השרת (לא ממה שהסוכן מדווח על עצמו) -
+    כך שאי אפשר לזייף אותו, ותמיד יהיה מדויק בהתאם למי שבאמת שלח את הבקשה ל-Vercel."""
+    fwd = request.headers.get("x-forwarded-for")
+    if fwd:
+        return fwd.split(",")[0].strip()
+    return request.client.host if request.client else None
+
+
 @app.post("/api/event")
-def create_event(e: Event, x_agent_token: Optional[str] = Header(default=None)):
+def create_event(e: Event, request: Request, x_agent_token: Optional[str] = Header(default=None)):
     check_auth(x_agent_token)
     host = e.host or e.source
+    wan_ip = get_wan_ip(request)
     try:
         conn = get_db_connection()
         cur = conn.cursor()
         result = analyze_event({"user": e.user, "action": e.action, "ip": e.ip}, cur)
         cur.execute(
             """
-            INSERT INTO events (user_name, action, source, host, ip, severity, score, description)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id
+            INSERT INTO events (user_name, action, source, host, ip, severity, score, description, lan_ip, wan_ip)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id
             """,
-            (e.user, e.action, e.source, host, e.ip, result["severity"], result["score"], result["description"]),
+            (e.user, e.action, e.source, host, e.ip, result["severity"], result["score"], result["description"], e.lan_ip, wan_ip),
         )
         event_id = cur.fetchone()[0]
         if result["severity"]:
@@ -241,7 +254,7 @@ def get_events(limit: int = 200):
         """
         SELECT id, ts as timestamp, user_name as user, action,
                COALESCE(host, source) as host, ip as source_ip,
-               severity, score, description
+               severity, score, description, lan_ip, wan_ip
         FROM events ORDER BY id DESC LIMIT %s
         """,
         (limit,),
@@ -372,7 +385,7 @@ def investigate(event_id: int):
     cur.execute(
         """
         SELECT id, ts as timestamp, user_name as user, action,
-               COALESCE(host, source) as host, ip as source_ip, severity, score, description
+               COALESCE(host, source) as host, ip as source_ip, severity, score, description, lan_ip, wan_ip
         FROM events WHERE id = %s
         """,
         (event_id,),
@@ -387,7 +400,7 @@ def investigate(event_id: int):
     cur.execute(
         """
         SELECT id, ts as timestamp, user_name as user, action,
-               COALESCE(host, source) as host, ip as source_ip, severity, score, description
+               COALESCE(host, source) as host, ip as source_ip, severity, score, description, lan_ip, wan_ip
         FROM events
         WHERE id != %s AND (user_name = %s OR ip = %s OR COALESCE(host, source) = %s)
           AND ts BETWEEN %s - interval '30 minutes' AND %s + interval '30 minutes'
