@@ -41,6 +41,23 @@ cd "D:\Cyber\soc-system\root\api\agent"
 
 בדיקה: `C:\Program Files\Hayanuka_SIEM\debug.txt` אמור להראות "Agent Started" ו-"Sent: ...". בדשבורד (ה-URL של Vercel) אמור להופיע האירוע תוך כמה שניות.
 
+### 3.1 חשוב — בלי זה חלק מהאירועים לא ייווצרו בכלל
+
+Windows לא רושם כברירת מחדל את כל ה-Event IDs שה-agent מחפש. חלקם דורשים הפעלת Advanced Audit Policy מפורשת, ואחד מהם (4663 — ניסיון פתיחת קובץ ללא הרשאה) דורש גם הגדרת Auditing על התיקייה/קובץ הספציפיים (SACL), לא רק מדיניות כללית.
+
+הרץ **כ-Administrator**, על כל מחשב שמתקינים בו את ה-agent (או דרך GPO):
+
+```powershell
+auditpol /set /subcategory:"Logon"                     /success:enable /failure:enable
+auditpol /set /subcategory:"Account Lockout"            /success:enable /failure:enable
+auditpol /set /subcategory:"User Account Management"    /success:enable /failure:enable
+auditpol /set /subcategory:"Security State Change"      /success:enable /failure:enable
+auditpol /set /subcategory:"Other Object Access Events" /success:enable /failure:enable
+auditpol /set /subcategory:"Removable Storage"          /success:enable /failure:enable
+```
+
+בשביל 4663 ספציפית (ניסיון פתיחת קובץ שנדחה) — צריך גם להוסיף Auditing entry על התיקיות הרגישות שרוצים לפקח עליהן: Properties -> Security -> Advanced -> Auditing -> Add -> Principal: Everyone -> Type: Fail -> Basic permissions: Read/Write/Delete. בלי זה, גם עם auditpol מופעל, 4663 לא ייווצר.
+
 ## 4. הפצה לכל הארגון
 
 כשהבדיקה על מכונה אחת עובדת:
@@ -55,7 +72,15 @@ cd "D:\Cyber\soc-system\root\api\agent"
 
 ## 6. הרחבת הזיהוי (עוד Event IDs / חוקים)
 
-נוספו כבר: 4740 (נעילת חשבון — brute force), 4648 (credentials מפורשים — lateral movement), 4672 (logon מנהלתי), 4697 + 7045 (התקנת שירות — persistence).
+נוספו כבר:
+
+- 4740 (נעילת חשבון), 4648 (credentials מפורשים — lateral movement), 4672 (logon מנהלתי), 4697 + 7045 (התקנת שירות — persistence).
+- **יותר מניסיון כושל אחד** — כל כשלון login נוסף מאותו user/IP תוך 10 דקות מעלה ניקוד (לא מחכה ל-5 כשלונות).
+- **ניסיונות מקבילים/תוך שניות** — 3+ כשלונות login (מכל user/IP) תוך 3 שניות מסומן כהתקפה ממוכנת אפשרית (password spraying).
+- **גישה חוזרת שנדחתה** — 3+ ניסיונות `file_permission_denied`/`network_file_access_failed` מאותו משתמש תוך 2 דקות מסומן כסריקה/פריצה אפשרית.
+- **Windows Defender** — האג'נט קורא גם את ה-log של Defender: זיהוי תוכנה זדונית/כופרה (1116), חסימה בפועל (1117), וכיבוי הגנה בזמן אמת (5001/5010/5012 — סימן חזק לניסיון תקיפה שמנטרל את ה-AV לפני שהוא פועל).
+
+**חשוב לגבי פישינג:** האג'נט מבוסס Windows Event Log מקומי, ולכן לא יכול לזהות פישינג במייל או בדפדפן — זה דורש אינטגרציה נפרדת (Microsoft Defender for Office 365 / Microsoft Graph Security API, אם יש לך M365). אם זה רלוונטי אצלך, תגיד לי ונבנה את זה כתוסף נפרד.
 
 כדי להוסיף עוד:
 
