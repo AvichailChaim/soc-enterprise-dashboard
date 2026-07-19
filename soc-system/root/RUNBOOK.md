@@ -97,3 +97,15 @@ Invoke-RestMethod -Uri "https://soc-enterprise-dashboard-hayanuka.vercel.app/api
 ## 8. קבצים ישנים/מיותרים
 
 `api/backend/*` (מנוע מקומי עם SQLite), `api/send.ps1`, `api/run.bat` הם גרסאות פיתוח מוקדמות שהוחלפו ע"י `api/index.py` המאוחד. אפשר להשאיר לעת עתה, אך מומלץ להסיר אחרי שווידאת שה-agent החדש עובד בייצור, כדי למנוע בלבול עתידי.
+
+## 9. תקלה ידועה — Trend Micro Apex One הורג את ה-Agent
+
+**תסמין:** השירות `Hayanuka_SIEM_Agent` עולה ל-Paused שוב ושוב. ב-Event Viewer (Application log, source `nssm`) רואים "ran for less than 15000 milliseconds" וקוד יציאה סינתטי (למשל `4294770688`) חוזר על עצמו במרווחים קבועים (ה-backoff המתגבר של nssm).
+
+**סיבה:** אם על התחנה מותקן **Trend Micro Apex One** (מופיע גם הוא ב-Event Viewer, source `SecurityCenter`), הוא כנראה מזהה את ה-agent כהתנהגות חשודה ("ran hidden, reads Security log, שולח החוצה ל-HTTPS כל 10 שניות, מחליף את הקובץ שלו") ומחסל את התהליך תוך שניות — לפני שהוא מספיק להתייצב.
+
+**מה נבדק ותוקן כבר בקוד:** הוסר `-WindowStyle Hidden` מהאופן שבו השירות מפעיל את `send.ps1` (`api/agent/install.ps1`), כי זה אחד הדגלים שהכי מעורר חשד ל-EDR/AV. זה מקטין סיכוי לחסימה אך לא בהכרח פותר לגמרי אם ה-Behavior Monitoring עדיין תופס את שאר הדפוס.
+
+**הפתרון המלא (לא בוצע כרגע):** להוסיף Exclusion ב-Trend Micro (מקומי או ב-Apex Central המרכזי) לנתיב `C:\Program Files\Hayanuka_SIEM\send.ps1`, תחת Behavior Monitoring Exception List (ואולי גם Predictive Machine Learning Exception List, תלוי איזו חוקה תפסה - רואים זאת בלוג ה-Threat/Behavior Monitoring של Apex One בזמן החסימה). דורש Deploy של המדיניות אחרי ההוספה, ובדיקה חוזרת.
+
+**החלטה נוכחית:** לא טופל. במקום זאת, ה-agent מופץ קודם רק על מחשבים **בלי** Trend Micro Apex One מותקן. יש לזכור זאת בבחירת המחשבים להפצה, ולחזור לפתרון ה-exclusion אם רוצים לכסות גם את המחשבים המוגנים ב-Trend Micro.
