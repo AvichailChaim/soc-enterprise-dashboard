@@ -39,7 +39,7 @@ cd "D:\Cyber\soc-system\root\api\agent"
 .\install.ps1 -AgentToken "הטוקן-שהגדרת-ב-Vercel"
 ```
 
-בדיקה: `C:\Program Files\Hayanuka_SIEM\debug.txt` אמור להראות "Agent Started" ו-"Sent: ...". בדשבורד (ה-URL של Vercel) אמור להופיע האירוע תוך כמה שניות.
+בדיקה: `C:\Hayanuka_SIEM\debug.txt` אמור להראות "Agent Started" ו-"Sent: ...". בדשבורד (ה-URL של Vercel) אמור להופיע האירוע תוך כמה שניות.
 
 ### 3.1 חשוב — בלי זה חלק מהאירועים לא ייווצרו בכלל
 
@@ -98,14 +98,24 @@ Invoke-RestMethod -Uri "https://soc-enterprise-dashboard-hayanuka.vercel.app/api
 
 `api/backend/*` (מנוע מקומי עם SQLite), `api/send.ps1`, `api/run.bat` הם גרסאות פיתוח מוקדמות שהוחלפו ע"י `api/index.py` המאוחד. אפשר להשאיר לעת עתה, אך מומלץ להסיר אחרי שווידאת שה-agent החדש עובד בייצור, כדי למנוע בלבול עתידי.
 
-## 9. תקלה ידועה — Trend Micro Apex One הורג את ה-Agent
+## 9. תקלות ידועות — השירות עולה ל-Paused ולא רץ
 
-**תסמין:** השירות `Hayanuka_SIEM_Agent` עולה ל-Paused שוב ושוב. ב-Event Viewer (Application log, source `nssm`) רואים "ran for less than 15000 milliseconds" וקוד יציאה סינתטי (למשל `4294770688`) חוזר על עצמו במרווחים קבועים (ה-backoff המתגבר של nssm).
+היו שני גורמים שונים שגרמו לאותו תסמין (`Hayanuka_SIEM_Agent` עולה ל-Paused, ב-Event Viewer רואים "ran for less than 15000 milliseconds" עם קוד יציאה סינתטי כמו `4294770688`):
 
-**סיבה:** אם על התחנה מותקן **Trend Micro Apex One** (מופיע גם הוא ב-Event Viewer, source `SecurityCenter`), הוא כנראה מזהה את ה-agent כהתנהגות חשודה ("ran hidden, reads Security log, שולח החוצה ל-HTTPS כל 10 שניות, מחליף את הקובץ שלו") ומחסל את התהליך תוך שניות — לפני שהוא מספיק להתייצב.
+### 9.1 הבאג האמיתי (תוקן) — רווח בנתיב ("Program Files") שבר את ה-quoting
 
-**מה נבדק ותוקן כבר בקוד:** הוסר `-WindowStyle Hidden` מהאופן שבו השירות מפעיל את `send.ps1` (`api/agent/install.ps1`), כי זה אחד הדגלים שהכי מעורר חשד ל-EDR/AV. זה מקטין סיכוי לחסימה אך לא בהכרח פותר לגמרי אם ה-Behavior Monitoring עדיין תופס את שאר הדפוס.
+זו הייתה הסיבה המרכזית, וקרתה גם על מחשבים בלי שום אנטי-וירוס. תיקיית ההתקנה המקורית הייתה `C:\Program Files\Hayanuka_SIEM` — הרווח במילה "Program Files" גרם לכך שכש-nssm הפעיל את powershell.exe עם `-File C:\Program Files\Hayanuka_SIEM\send.ps1`, הפרמטר `-File` קיבל בפועל רק `C:\Program` (מחרוזת נחתכה ברווח), ו-powershell.exe נכשל ויצא כמעט מיידית, בלי להגיע אפילו לשורה הראשונה של הסקריפט (ולכן `debug.txt` לא נוצר בכלל).
 
-**הפתרון המלא (לא בוצע כרגע):** להוסיף Exclusion ב-Trend Micro (מקומי או ב-Apex Central המרכזי) לנתיב `C:\Program Files\Hayanuka_SIEM\send.ps1`, תחת Behavior Monitoring Exception List (ואולי גם Predictive Machine Learning Exception List, תלוי איזו חוקה תפסה - רואים זאת בלוג ה-Threat/Behavior Monitoring של Apex One בזמן החסימה). דורש Deploy של המדיניות אחרי ההוספה, ובדיקה חוזרת.
+**איך אובחן:** `nssm get Hayanuka_SIEM_Agent AppParameters` הראה את הנתיב בלי מרכאות מסביבו.
 
-**החלטה נוכחית:** לא טופל. במקום זאת, ה-agent מופץ קודם רק על מחשבים **בלי** Trend Micro Apex One מותקן. יש לזכור זאת בבחירת המחשבים להפצה, ולחזור לפתרון ה-exclusion אם רוצים לכסות גם את המחשבים המוגנים ב-Trend Micro.
+**התיקון:**
+1. תיקיית ההתקנה שונתה ל-`C:\Hayanuka_SIEM` (בלי רווח בנתיב) — גם ב-`install.ps1` וגם ב-`send.ps1`.
+2. `install.ps1` כבר לא מעביר את כל שורת הפקודה כמחרוזת אחת ל-`nssm install`; במקום זה, `Application` ו-`AppParameters` נקבעים בקריאות `nssm set` נפרדות, שמטפלות נכון ב-quoting גם אם יש רווחים בנתיב.
+
+מי שכבר התקין עם הגרסה הישנה: להריץ ניקוי מלא (סעיף 3 למטה) ואז להתקין מחדש עם `install.ps1` המעודכן — הלוגים יעברו אוטומטית לנתיב החדש `C:\Hayanuka_SIEM\debug.txt`.
+
+### 9.2 גורם אפשרי נוסף — Trend Micro Apex One / EDR
+
+בנפרד מהבאג הנ"ל, על מחשבים עם **Trend Micro Apex One** מותקן (מופיע ב-Event Viewer, source `SecurityCenter`) יש סיכוי אמיתי שה-EDR יזהה את ה-agent כהתנהגות חשודה (תהליך שקורא Security log, שולח החוצה ל-HTTPS כל 10 שניות, ומחליף את הקובץ שלו) ויחסל אותו. הוסר `-WindowStyle Hidden` מהפעלת הסקריפט כדי להקטין את הסיכוי לזה. אם עדיין קורה: להוסיף Exclusion ב-Trend Micro (מקומי או ב-Apex Central) לנתיב `C:\Hayanuka_SIEM\send.ps1`, תחת Behavior Monitoring Exception List (ואולי גם Predictive Machine Learning), ואז Deploy של המדיניות.
+
+**החלטה נוכחית:** ה-agent מופץ בינתיים רק על מחשבים בלי Trend Micro. עם התיקון בסעיף 9.1, סביר שהרבה ממה שנראה כמו "בעיית Trend Micro" בפועל היה הבאג של הרווח בנתיב — כדאי לנסות שוב גם על מחשבים עם Trend Micro אחרי התיקון, לפני שמניחים שזה עדיין חסום.
