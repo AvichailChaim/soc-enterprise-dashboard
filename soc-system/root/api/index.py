@@ -83,6 +83,7 @@ class Event(BaseModel):
     host: Optional[str] = None
     ip: Optional[str] = None
     lan_ip: Optional[str] = None
+    reason: Optional[str] = None
 
 
 # מיפוי אירוע -> טכניקת MITRE ATT&CK משוערת, לצורך תצוגה בממשק
@@ -101,6 +102,7 @@ MITRE_MAP = {
     "malware_detected": "T1486 Data Encrypted for Impact (Ransomware) / Malware",
     "malware_blocked": "T1486 Data Encrypted for Impact (Ransomware) / Malware",
     "defender_protection_disabled": "T1562.001 Disable or Modify Tools",
+    "agent_tamper_detected": "T1489 Service Stop / Tamper Attempt",
 }
 
 # ניקוד בסיסי לכל סוג אירוע (score, description)
@@ -118,6 +120,7 @@ BASE_SCORES = {
     "malware_detected": (90, "Malware/ransomware-family threat detected by Windows Defender."),
     "malware_blocked": (60, "Windows Defender detected and took action against a threat."),
     "defender_protection_disabled": (85, "Real-time protection / antivirus was disabled - possible evasion attempt."),
+    "agent_tamper_detected": (95, "CRITICAL: The monitoring agent service was stopped/removed without authorization and was automatically restored by the watchdog."),
 }
 
 
@@ -129,6 +132,10 @@ def analyze_event(e, cur):
     if e["action"] in BASE_SCORES:
         s, desc = BASE_SCORES[e["action"]]
         score += s
+        # אם הסוכן דיווח סיבה מדויקת (למשל "Bad password" מתוך Sub Status של Event 4625) -
+        # מציגים אותה במפורש במקום את התיאור הגנרי, כדי שבדשבורד יהיה ברור בדיוק למה קפצה ההתראה.
+        if e.get("reason") and e["action"] in ("login_failed", "account_locked_out", "network_file_access_failed"):
+            desc = f"Failed login attempt for user '{e['user']}' - reason: {e['reason']}."
         parts.append(desc)
 
     user_lower = (e["user"] or "").lower()
@@ -223,7 +230,7 @@ def create_event(e: Event, request: Request, x_agent_token: Optional[str] = Head
     try:
         conn = get_db_connection()
         cur = conn.cursor()
-        result = analyze_event({"user": e.user, "action": e.action, "ip": e.ip}, cur)
+        result = analyze_event({"user": e.user, "action": e.action, "ip": e.ip, "reason": e.reason}, cur)
         cur.execute(
             """
             INSERT INTO events (user_name, action, source, host, ip, severity, score, description, lan_ip, wan_ip)
@@ -348,6 +355,7 @@ def get_stats():
         "Network": {"network_file_access_failed"},
         "Privilege": {"user_created", "privileged_logon"},
         "Malware": {"audit_log_cleared", "new_service_installed", "malware_detected", "malware_blocked", "defender_protection_disabled"},
+        "Tamper": {"agent_tamper_detected"},
     }
     heat = {cat: [0] * 6 for cat in categories}
 
