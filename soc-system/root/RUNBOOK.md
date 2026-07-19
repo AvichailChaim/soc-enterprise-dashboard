@@ -45,18 +45,11 @@ cd "D:\Cyber\soc-system\root\api\agent"
 
 Windows לא רושם כברירת מחדל את כל ה-Event IDs שה-agent מחפש. חלקם דורשים הפעלת Advanced Audit Policy מפורשת, ואחד מהם (4663 — ניסיון פתיחת קובץ ללא הרשאה) דורש גם הגדרת Auditing על התיקייה/קובץ הספציפיים (SACL), לא רק מדיניות כללית.
 
-הרץ **כ-Administrator**, על כל מחשב שמתקינים בו את ה-agent (או דרך GPO):
+**זה כבר אוטומטי:** `install.ps1` עכשיו מפעיל את ה-audit policies הנדרשות בעצמו בכל התקנה (שלב 0), אז אין צורך להריץ את זה בנפרד לכל מחשב — זו אותה פעולה אחת שכבר עושים כשמתקינים את ה-agent.
 
-```powershell
-auditpol /set /subcategory:"Logon"                     /success:enable /failure:enable
-auditpol /set /subcategory:"Account Lockout"            /success:enable /failure:enable
-auditpol /set /subcategory:"User Account Management"    /success:enable /failure:enable
-auditpol /set /subcategory:"Security State Change"      /success:enable /failure:enable
-auditpol /set /subcategory:"Other Object Access Events" /success:enable /failure:enable
-auditpol /set /subcategory:"Removable Storage"          /success:enable /failure:enable
-```
+**זו הגדרה מקומית לכל מחשב.** אם יש לך Active Directory domain, אפשר במקום זה להגדיר את אותן תת-קטגוריות פעם אחת ב-GPO (Computer Configuration -> Policies -> Windows Settings -> Security Settings -> Advanced Audit Policy Configuration), משויך ל-OU של כל מחשבי הארגון — כך זה חל אוטומטית על הכל בלי לגעת בכל מחשב בנפרד, וגם בלי תלות ב-`install.ps1`.
 
-בשביל 4663 ספציפית (ניסיון פתיחת קובץ שנדחה) — צריך גם להוסיף Auditing entry על התיקיות הרגישות שרוצים לפקח עליהן: Properties -> Security -> Advanced -> Auditing -> Add -> Principal: Everyone -> Type: Fail -> Basic permissions: Read/Write/Delete. בלי זה, גם עם auditpol מופעל, 4663 לא ייווצר.
+בשביל 4663 ספציפית (ניסיון פתיחת קובץ שנדחה) — צריך גם להוסיף Auditing entry על התיקיות הרגישות שרוצים לפקח עליהן: Properties -> Security -> Advanced -> Auditing -> Add -> Principal: Everyone -> Type: Fail -> Basic permissions: Read/Write/Delete. זה ספציפי לכל תיקייה/ארגון ולכן נשאר צעד ידני; אם יש לך רשימת תיקיות קבועה שרלוונטית לכל המחשבים (למשל תיקיות שיתוף רגישות), אפשר להוסיף גם את זה ל-`install.ps1` עם `icacls` — תגיד לי אם תרצה.
 
 ## 4. הפצה לכל הארגון
 
