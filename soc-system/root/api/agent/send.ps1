@@ -43,9 +43,36 @@ $lastCheckSystem   = (Get-Date).AddMinutes(-5)
 $lastCheckDefender = (Get-Date).AddMinutes(-5)
 $loopCount = 0
 
+function Get-LogonFailureReason {
+    # ממפה קוד Sub Status/Status של Event 4625 לסיבה קריאה לבן אדם, כדי שההתראה בדשבורד
+    # תגיד במפורש "סיסמה שגויה" / "משתמש לא קיים" וכו', ולא רק "ניסיון כניסה נכשל".
+    param($subStatus, $status)
+    $map = @{
+        '0XC000006A' = 'Bad password (user name exists, wrong password)'
+        '0XC0000064' = 'User name does not exist'
+        '0XC0000234' = 'Account is currently locked out'
+        '0XC0000072' = 'Account is disabled'
+        '0XC0000193' = 'Account has expired'
+        '0XC0000071' = 'Password has expired'
+        '0XC0000224' = 'Password change required at next logon'
+        '0XC000006F' = 'Logon attempted outside allowed hours'
+        '0XC0000070' = 'Workstation restriction (not permitted to log on from this device)'
+        '0XC0000133' = 'Clock skew between client and domain controller is too large'
+        '0XC000015B' = 'User does not have the requested logon type on this machine'
+    }
+    foreach ($code in @($subStatus, $status)) {
+        if ($code) {
+            $key = $code.ToString().ToUpper()
+            if ($map.ContainsKey($key)) { return $map[$key] }
+        }
+    }
+    if ($subStatus -or $status) { return "Unknown reason (code: $subStatus$status)" }
+    return $null
+}
+
 function Send-SiemEvent {
-    param($user, $action, $source, $ip)
-    $body = @{ user = $user; action = $action; source = $source; ip = $ip; lan_ip = $LAN_IP } | ConvertTo-Json
+    param($user, $action, $source, $ip, $reason = $null)
+    $body = @{ user = $user; action = $action; source = $source; ip = $ip; lan_ip = $LAN_IP; reason = $reason } | ConvertTo-Json
     try {
         Invoke-RestMethod -Uri $SIEM_EVENT -Method Post -Body $body -ContentType "application/json" `
             -Headers @{ "X-Agent-Token" = $AGENT_TOKEN } -TimeoutSec 5 | Out-Null
@@ -96,12 +123,16 @@ while ($true) {
                 $action = "unknown_event"
                 $ip = "127.0.0.1"
                 $source = "$($env:COMPUTERNAME) (Event ID $eventID)"
+                $reason = $null
 
                 switch ($eventID) {
                     4625 {
                         $targetUser = ($xml.Event.EventData.Data | Where-Object { $_.Name -eq "TargetUserName" }).'#text'
                         $ip = ($xml.Event.EventData.Data | Where-Object { $_.Name -eq "IpAddress" }).'#text'
                         $logonType = ($xml.Event.EventData.Data | Where-Object { $_.Name -eq "LogonType" }).'#text'
+                        $subStatus = ($xml.Event.EventData.Data | Where-Object { $_.Name -eq "SubStatus" }).'#text'
+                        $status = ($xml.Event.EventData.Data | Where-Object { $_.Name -eq "Status" }).'#text'
+                        $reason = Get-LogonFailureReason -subStatus $subStatus -status $status
                         $action = if ($logonType -eq "3") { "network_file_access_failed" } else { "login_failed" }
                     }
                     4624 {
@@ -149,7 +180,7 @@ while ($true) {
                 }
 
                 if (!$ip -or $ip -eq "-") { $ip = "127.0.0.1" }
-                Send-SiemEvent -user $targetUser -action $action -source $source -ip $ip
+                Send-SiemEvent -user $targetUser -action $action -source $source -ip $ip -reason $reason
             } catch { "Error parsing security event: $($_.Exception.Message)" | Out-File $debugFile -Append }
         }
     } catch { "Security log query error: $($_.Exception.Message)" | Out-File $debugFile -Append }
