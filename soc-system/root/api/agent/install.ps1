@@ -13,7 +13,7 @@ param(
     [string]$AgentToken = ""
 )
 
-$installDir  = "C:\Program Files\Hayanuka_SIEM"
+$installDir  = "C:\Hayanuka_SIEM"   # בכוונה בלי רווח בנתיב (כגון "Program Files") - זו הייתה סיבת הבאג
 $agentPath   = "$installDir\send.ps1"
 $nssmPath    = "$installDir\nssm.exe"
 $localNssm   = Join-Path $PSScriptRoot "..\nssm.exe"   # api/nssm.exe, לצד תיקיית agent/ (אם קיים מקומית)
@@ -90,7 +90,11 @@ if (Get-Service "Hayanuka_SIEM_Agent" -ErrorAction SilentlyContinue) {
 }
 
 Write-Host "[*] Creating Windows background service (Hayanuka_SIEM_Agent) via NSSM..." -ForegroundColor Cyan
-& $nssmPath install "Hayanuka_SIEM_Agent" "C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe" "-ExecutionPolicy Bypass -NoProfile -File `"$agentPath`""
+# חשוב: Application ו-AppParameters נקבעים בקריאות "set" נפרדות (לא כמחרוזת אחת ל-"install"),
+# אחרת ה-quoting של הנתיב יכול להישבר אם יש רווח בנתיב (למשל "Program Files") - זה היה הבאג בפועל.
+& $nssmPath install "Hayanuka_SIEM_Agent" "C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"
+& $nssmPath set "Hayanuka_SIEM_Agent" AppParameters "-ExecutionPolicy Bypass -NoProfile -File `"$agentPath`""
+& $nssmPath set "Hayanuka_SIEM_Agent" AppDirectory $installDir
 & $nssmPath set "Hayanuka_SIEM_Agent" Start SERVICE_AUTO_START
 & $nssmPath set "Hayanuka_SIEM_Agent" AppThrottle 15000 | Out-Null
 & $nssmPath start "Hayanuka_SIEM_Agent" 2>$null | Out-Null
