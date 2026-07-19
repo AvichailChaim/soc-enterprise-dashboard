@@ -45,8 +45,11 @@ while ($true) {
                 Invoke-WebRequest -Uri $SIEM_UPDATE -OutFile $newScriptPath -TimeoutSec 15 -ErrorAction SilentlyContinue
                 if (Test-Path $newScriptPath) {
                     if ((Get-FileHash $currentScript).Hash -ne (Get-FileHash $newScriptPath).Hash) {
+                        "Self-update: new version detected, swapping file and exiting $(Get-Date)" | Out-File $debugFile -Append
                         Move-Item -Path $newScriptPath -Destination $currentScript -Force
-                        Restart-Service "Hayanuka_SIEM_Agent" -Force
+                        # לא קוראים כאן ל-Restart-Service על עצמנו (זה שביר תחת nssm - התהליך
+                        # מבקש לעצור את עצמו ולפעמים לא חוזר). במקום זה פשוט יוצאים, ו-nssm
+                        # (AppExit=Restart, ברירת מחדל) יעלה מחדש את התהליך עם הקובץ המעודכן.
                         exit
                     }
                     Remove-Item $newScriptPath -ErrorAction SilentlyContinue
