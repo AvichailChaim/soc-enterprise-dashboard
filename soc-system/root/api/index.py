@@ -1,4 +1,6 @@
 import os
+import secrets
+import hmac
 from typing import Optional
 
 import psycopg2
@@ -19,6 +21,12 @@ app.add_middleware(
 
 # מוגדר ב-Vercel Environment Variables. אם לא מוגדר - האימות מדולג (מצב פיתוח בלבד).
 AGENT_TOKEN = os.environ.get("AGENT_TOKEN")
+
+# פרטי ההתחברות לדשבורד עצמו (מנהל המערכת מגדיר אותם מראש ב-Vercel Environment Variables).
+# אם לא מוגדרים בכלל - הדשבורד יישאר פתוח בלי התחברות (מצב פיתוח בלבד, לא מומלץ בייצור).
+ADMIN_USERNAME = os.environ.get("ADMIN_USERNAME")
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD")
+SESSION_HOURS = 24
 
 
 def get_db_connection():
@@ -62,6 +70,16 @@ def ensure_schema():
             description TEXT,
             mitre TEXT,
             ts TIMESTAMPTZ DEFAULT now()
+        )
+        """
+    )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS sessions (
+            token TEXT PRIMARY KEY,
+            username TEXT,
+            created_at TIMESTAMPTZ DEFAULT now(),
+            expires_at TIMESTAMPTZ
         )
         """
     )
@@ -213,6 +231,60 @@ def check_auth(x_agent_token: Optional[str]):
         raise HTTPException(status_code=401, detail="invalid or missing agent token")
 
 
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+def check_session(x_session_token: Optional[str]):
+    """מגן על נתוני הדשבורד (events/stats/alerts/investigate) - דורש טוקן סשן תקף שהתקבל מ-/api/login.
+    אם ADMIN_USERNAME/ADMIN_PASSWORD לא הוגדרו בכלל ב-Vercel, ההתחברות מדולגת (מצב פיתוח בלבד)."""
+    if not ADMIN_USERNAME or not ADMIN_PASSWORD:
+        return
+    if not x_session_token:
+        raise HTTPException(status_code=401, detail="login required")
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT 1 FROM sessions WHERE token = %s AND expires_at > now()", (x_session_token,))
+    row = cur.fetchone()
+    cur.close()
+    conn.close()
+    if not row:
+        raise HTTPException(status_code=401, detail="session expired or invalid")
+
+
+@app.post("/api/login")
+def login(body: LoginRequest):
+    if not ADMIN_USERNAME or not ADMIN_PASSWORD:
+        raise HTTPException(status_code=500, detail="ADMIN_USERNAME/ADMIN_PASSWORD not configured on the server")
+    valid = hmac.compare_digest(body.username, ADMIN_USERNAME) and hmac.compare_digest(body.password, ADMIN_PASSWORD)
+    if not valid:
+        raise HTTPException(status_code=401, detail="invalid username or password")
+    token = secrets.token_urlsafe(32)
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute(
+        f"INSERT INTO sessions (token, username, expires_at) VALUES (%s, %s, now() + interval '{SESSION_HOURS} hours')",
+        (token, body.username),
+    )
+    conn.commit()
+    cur.close()
+    conn.close()
+    return {"token": token}
+
+
+@app.post("/api/logout")
+def logout(x_session_token: Optional[str] = Header(default=None)):
+    if x_session_token:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("DELETE FROM sessions WHERE token = %s", (x_session_token,))
+        conn.commit()
+        cur.close()
+        conn.close()
+    return {"status": "ok"}
+
+
 def get_wan_ip(request: Request) -> Optional[str]:
     """ה-WAN IP האמיתי נלקח מהבקשה עצמה בצד השרת (לא ממה שהסוכן מדווח על עצמו) -
     כך שאי אפשר לזייף אותו, ותמיד יהיה מדויק בהתאם למי שבאמת שלח את הבקשה ל-Vercel."""
@@ -256,7 +328,8 @@ def create_event(e: Event, request: Request, x_agent_token: Optional[str] = Head
 
 
 @app.get("/api/events")
-def get_events(limit: int = 200):
+def get_events(limit: int = 200, x_session_token: Optional[str] = Header(default=None)):
+    check_session(x_session_token)
     conn = get_db_connection()
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
     cur.execute(
@@ -277,7 +350,8 @@ def get_events(limit: int = 200):
 
 
 @app.get("/api/alerts")
-def get_alerts(limit: int = 100):
+def get_alerts(limit: int = 100, x_session_token: Optional[str] = Header(default=None)):
+    check_session(x_session_token)
     conn = get_db_connection()
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
     cur.execute(
@@ -297,7 +371,8 @@ def get_alerts(limit: int = 100):
 
 
 @app.get("/api/stats")
-def get_stats():
+def get_stats(x_session_token: Optional[str] = Header(default=None)):
+    check_session(x_session_token)
     conn = get_db_connection()
     cur = conn.cursor()
 
@@ -389,7 +464,8 @@ def get_stats():
 
 
 @app.get("/api/investigate/{event_id}")
-def investigate(event_id: int):
+def investigate(event_id: int, x_session_token: Optional[str] = Header(default=None)):
+    check_session(x_session_token)
     conn = get_db_connection()
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
     cur.execute(
