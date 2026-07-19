@@ -37,8 +37,9 @@
     .loading { display:inline-flex; align-items:center; gap:8px; font-size:12px; color:#cbd5e1; }
     .spinner { width:14px; height:14px; border:2px solid rgba(148,163,184,.25); border-top-color:#38bdf8; border-radius:50%; animation:spin .8s linear infinite; }
     @keyframes spin { to { transform:rotate(360deg); } }
-    .list { margin:0; padding:0; list-style:none; }
+    .list { margin:0; padding:0; list-style:none; max-height:220px; overflow-y:auto; }
     .list li { display:flex; justify-content:space-between; gap:10px; padding:8px 0; border-bottom:1px solid rgba(148,163,184,.10); font-size:12px; }
+    .table-scroll { overflow:auto; max-height:480px; }
     .badge, .clickable-badge { display:inline-flex; align-items:center; gap:6px; padding:4px 8px; border-radius:999px; font-size:11px; border:1px solid rgba(148,163,184,.16); background:rgba(2,6,23,.45); color:#dbeafe; white-space:nowrap; cursor:pointer; }
     .sev-high { color:#fca5a5; } .sev-med { color:#fdba74; } .sev-low { color:#86efac; }
     .table-wrap { display:grid; grid-template-rows:auto 1fr; padding:12px; overflow-x:auto; }
@@ -74,31 +75,28 @@
       .sub-grid { grid-template-columns:1fr 1fr; }
     }
 
-    /* ===== שולחני - חוזר להתנהגות "אפליקציה" עם גובה קבוע וגלילה פנימית בלבד ===== */
+    /* ===== שולחני - פריסה נעימה יותר, עם גלילת עמוד חופשית + גלילה פנימית לרשימות/טבלה ארוכות ===== */
     @media (min-width: 1024px) {
-      html, body { height:100%; overflow:hidden; }
-      .app { width:100vw; height:100vh; grid-template-columns:76px 1fr; overflow:hidden; }
+      html, body { min-height:100%; }
+      .app { width:100vw; min-height:100vh; grid-template-columns:76px 1fr; }
       .sidebar { padding:14px 0; gap:10px; }
       .side-btn { width:42px; height:42px; border-radius:13px; }
-      .main { grid-template-rows:64px 88px 50px 1fr 170px; gap:12px; padding:12px; overflow:hidden; }
+      .main { grid-template-rows:auto; gap:12px; padding:12px; }
       .panel { border-radius:18px; }
-      .topbar { flex-wrap:nowrap; padding:0 16px; overflow:hidden; }
-      .kpis { grid-template-columns:repeat(6, minmax(0, 1fr)); gap:10px; overflow:hidden; }
+      .topbar { flex-wrap:nowrap; padding:0 16px; }
+      .kpis { grid-template-columns:repeat(6, minmax(0, 1fr)); gap:10px; }
       .kpi-label { font-size:11px; margin-bottom:8px; }
       .kpi-value { font-size:26px; }
       .filters { grid-template-columns:repeat(4, minmax(0, 1fr)) auto; gap:8px; padding:0; }
-      .content { grid-template-columns:1.55fr .9fr; overflow:hidden; }
-      .left-grid { grid-template-rows:1.35fr .95fr; overflow:hidden; }
-      .chart-panel { grid-template-rows:42px 1fr; overflow:hidden; }
-      .sub-grid { overflow:hidden; }
-      .box { overflow:hidden; }
-      .list { overflow:hidden; }
-      .table-wrap { grid-template-rows:36px 1fr; overflow:hidden; }
+      .content { grid-template-columns:1.55fr .9fr; }
+      .left-grid { grid-template-rows:auto auto; }
+      .chart-panel { grid-template-rows:auto 340px; }
       table { table-layout:fixed; min-width:0; }
       th, td { overflow:hidden; text-overflow:ellipsis; }
-      .heatmap { grid-template-columns:70px repeat(6, 1fr); gap:6px; font-size:11px; overflow:hidden; }
+      .heatmap { grid-template-columns:70px repeat(6, 1fr); gap:6px; font-size:11px; }
       .heat-cell { min-height:28px; }
-      .mitre-grid { overflow:hidden; }
+      .list { max-height:260px; }
+      .table-scroll { max-height:56vh; }
     }
   </style>
 </head>
@@ -190,7 +188,7 @@
           </div>
         </div>
 
-        <div class="panel box min-w-0 overflow-hidden">
+        <div class="panel box min-w-0">
           <div class="title mb-1">Top IPs</div>
           <div class="subtitle mb-3">Highest activity sources</div>
           <ul class="list mb-4" id="top-ips"></ul>
@@ -213,7 +211,7 @@
           </div>
           <button class="btn" style="width:140px" onclick="manualRefresh()">Refresh</button>
         </div>
-        <div style="overflow:hidden">
+        <div class="table-scroll">
           <table>
             <thead>
               <tr>
@@ -429,7 +427,7 @@
     }
 
     function renderTable(events) {
-      document.getElementById('logs-table').innerHTML = (events || []).slice(0, 30).map(l => {
+      document.getElementById('logs-table').innerHTML = (events || []).map(l => {
         const time = l.timestamp ? l.timestamp.replace('T', ' ').slice(0,19) : '-';
         return `
           <tr class="click-row">
