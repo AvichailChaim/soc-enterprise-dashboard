@@ -10,7 +10,7 @@ $SIEM_UPDATE = "$SIEM_BASE/api/agent-update"
 # בלי טוקן תואם, השרת ידחה את האירועים (401).
 $AGENT_TOKEN = "CHANGE_ME_SET_SAME_VALUE_AS_VERCEL_AGENT_TOKEN"
 
-$installDir = "C:\Program Files\Hayanuka_SIEM"
+$installDir = "C:\Hayanuka_SIEM"
 $debugFile  = "$installDir\debug.txt"
 if (!(Test-Path $installDir)) { New-Item -ItemType Directory -Path $installDir -Force | Out-Null }
 
