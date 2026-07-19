@@ -90,7 +90,7 @@ if (Get-Service "Hayanuka_SIEM_Agent" -ErrorAction SilentlyContinue) {
 }
 
 Write-Host "[*] Creating Windows background service (Hayanuka_SIEM_Agent) via NSSM..." -ForegroundColor Cyan
-& $nssmPath install "Hayanuka_SIEM_Agent" "C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe" "-ExecutionPolicy Bypass -WindowStyle Hidden -File `"$agentPath`""
+& $nssmPath install "Hayanuka_SIEM_Agent" "C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe" "-ExecutionPolicy Bypass -NoProfile -File `"$agentPath`""
 & $nssmPath set "Hayanuka_SIEM_Agent" Start SERVICE_AUTO_START
 & $nssmPath set "Hayanuka_SIEM_Agent" AppThrottle 15000 | Out-Null
 & $nssmPath start "Hayanuka_SIEM_Agent" 2>$null | Out-Null
