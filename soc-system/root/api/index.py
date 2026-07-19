@@ -95,6 +95,9 @@ MITRE_MAP = {
     "privileged_logon": "T1078.003 Valid Accounts: Local Accounts",
     "new_service_installed": "T1543.003 Windows Service",
     "process_created": "T1059 Command and Scripting Interpreter",
+    "malware_detected": "T1486 Data Encrypted for Impact (Ransomware) / Malware",
+    "malware_blocked": "T1486 Data Encrypted for Impact (Ransomware) / Malware",
+    "defender_protection_disabled": "T1562.001 Disable or Modify Tools",
 }
 
 # ניקוד בסיסי לכל סוג אירוע (score, description)
@@ -109,11 +112,14 @@ BASE_SCORES = {
     "privileged_logon": (35, "Privileged (admin-level) logon detected."),
     "new_service_installed": (75, "New Windows service installed (possible persistence mechanism)."),
     "process_created": (20, "New process created."),
+    "malware_detected": (90, "Malware/ransomware-family threat detected by Windows Defender."),
+    "malware_blocked": (60, "Windows Defender detected and took action against a threat."),
+    "defender_protection_disabled": (85, "Real-time protection / antivirus was disabled - possible evasion attempt."),
 }
 
 
 def analyze_event(e, cur):
-    """מנוע ניקוד + קורלציה בסיסית (brute force) - רץ בכל אירוע נכנס."""
+    """מנוע ניקוד + קורלציות (brute force, ניסיונות מקבילים, גישה חוזרת שנדחתה) - רץ בכל אירוע נכנס."""
     score = 0
     parts = []
 
@@ -127,21 +133,53 @@ def analyze_event(e, cur):
         score += 20
         parts.append("Target user has administrative keywords.")
 
-    # קורלציה: כמה כשלונות התחברות מאותו משתמש/IP ב-5 הדקות האחרונות
     if e["action"] in ("login_failed", "account_locked_out"):
+        # קורלציה 1: יותר מניסיון כושל אחד מאותו משתמש/IP - כל כשלון נוסף מעלה את הניקוד
         cur.execute(
             """
             SELECT count(*) FROM events
             WHERE action IN ('login_failed', 'account_locked_out')
               AND (user_name = %s OR ip = %s)
-              AND ts > now() - interval '5 minutes'
+              AND ts > now() - interval '10 minutes'
             """,
             (e["user"], e.get("ip")),
         )
         recent_fails = cur.fetchone()[0]
+        if recent_fails >= 2:
+            score += 25
+            parts.append(f"Repeated failed login: attempt #{recent_fails + 1} for this user/IP in the last 10 minutes.")
         if recent_fails >= 5:
             score += 40
-            parts.append(f"Brute-force pattern detected: {recent_fails} failed logins in last 5 minutes.")
+            parts.append(f"Brute-force pattern detected: {recent_fails} failed logins in last 10 minutes.")
+
+        # קורלציה 2: כמה ניסיונות כושלים (בלי קשר למשתמש/IP) תוך שניות בודדות - סימן לניסיון ממוכן/מקבילי
+        cur.execute(
+            """
+            SELECT count(*) FROM events
+            WHERE action IN ('login_failed', 'account_locked_out')
+              AND ts > now() - interval '3 seconds'
+            """
+        )
+        concurrent_fails = cur.fetchone()[0]
+        if concurrent_fails >= 3:
+            score += 50
+            parts.append(f"{concurrent_fails} failed login attempts within 3 seconds - possible automated/parallel password attack.")
+
+    if e["action"] in ("file_permission_denied", "network_file_access_failed"):
+        # קורלציה 3: כמה ניסיונות גישה/פתיחת קובץ שנדחו מאותו משתמש בזמן קצר - סריקה/ניסיון פריצה, או סימן להתנהגות כופרה
+        cur.execute(
+            """
+            SELECT count(*) FROM events
+            WHERE action IN ('file_permission_denied', 'network_file_access_failed')
+              AND user_name = %s
+              AND ts > now() - interval '2 minutes'
+            """,
+            (e["user"],),
+        )
+        recent_denied = cur.fetchone()[0]
+        if recent_denied >= 3:
+            score += 35
+            parts.append(f"{recent_denied} access-denied attempts by this user in last 2 minutes - possible privilege probing or ransomware-style file scanning.")
 
     description = " | ".join(parts) if parts else "Normal system activity."
     mitre = MITRE_MAP.get(e["action"], "")
@@ -294,7 +332,7 @@ def get_stats():
         "Endpoint": {"file_permission_denied", "process_created"},
         "Network": {"network_file_access_failed"},
         "Privilege": {"user_created", "privileged_logon"},
-        "Malware": {"audit_log_cleared", "new_service_installed"},
+        "Malware": {"audit_log_cleared", "new_service_installed", "malware_detected", "malware_blocked", "defender_protection_disabled"},
     }
     heat = {cat: [0] * 6 for cat in categories}
 
