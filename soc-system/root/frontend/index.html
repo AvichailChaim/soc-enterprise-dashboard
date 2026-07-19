@@ -614,12 +614,25 @@
       if (ev.target.id === 'investigate-modal') closeInvestigation();
     });
 
-    if (getToken()) {
-      hideLogin();
-      startDashboard();
-    } else {
+    async function boot() {
+      if (getToken()) {
+        hideLogin();
+        startDashboard();
+        return;
+      }
+      // אם לא הוגדרו ADMIN_USERNAME/ADMIN_PASSWORD בשרת בכלל, ה-API לא דורש התחברות -
+      // בודקים את זה מול השרת במקום להציג תמיד את מסך הכניסה בעיוורון.
+      try {
+        const probe = await fetch('/api/stats');
+        if (probe.status !== 401) {
+          hideLogin();
+          startDashboard();
+          return;
+        }
+      } catch (e) {}
       showLogin();
     }
+    boot();
   </script>
 </body>
 </html>
