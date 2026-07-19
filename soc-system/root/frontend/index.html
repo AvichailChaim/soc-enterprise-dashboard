@@ -104,9 +104,9 @@
   <div class="app">
     <aside class="sidebar">
       <div class="w-11 h-11 rounded-xl grid place-items-center bg-slate-800/80 border border-slate-700">◆</div>
-      <button class="side-btn active" onclick="goHome()">⌂</button>
+      <button class="side-btn" onclick="goHome()">⌂</button>
       <button class="side-btn" onclick="loadView('logs')">▤</button>
-      <button class="side-btn" onclick="loadView('alerts')">◔</button>
+      <button class="side-btn active" onclick="loadView('alerts')">◔</button>
       <button class="side-btn" onclick="loadView('threats')">⚑</button>
       <button class="side-btn" onclick="loadView('settings')">⛭</button>
     </aside>
@@ -130,7 +130,7 @@
         <div class="panel kpi text-amber-400" onclick="setQuickFilter('', '', '', 'medium')"><div class="kpi-label">Medium alerts</div><div id="stat-medium" class="kpi-value">0</div></div>
         <div class="panel kpi text-fuchsia-400" onclick="loadView('alerts')"><div class="kpi-label">Total alerts</div><div id="stat-alerts" class="kpi-value">0</div></div>
         <div class="panel kpi text-emerald-400"><div class="kpi-label">Unique source IPs</div><div id="stat-ips" class="kpi-value">0</div></div>
-        <div class="panel kpi text-emerald-300"><div class="kpi-label">View</div><div id="stat-view" class="kpi-value" style="font-size:16px">All logs</div></div>
+        <div class="panel kpi text-emerald-300"><div class="kpi-label">View</div><div id="stat-view" class="kpi-value" style="font-size:16px">Alerts</div></div>
       </section>
 
       <section class="panel box">
@@ -206,7 +206,7 @@
       <section class="panel table-wrap">
         <div class="flex items-center justify-between mb-2">
           <div>
-            <div class="title" id="table-title">Recent events</div>
+            <div class="title" id="table-title">Alerts (medium, high & critical)</div>
             <div class="subtitle">Latest security-related activity from the platform</div>
           </div>
           <button class="btn" style="width:140px" onclick="manualRefresh()">Refresh</button>
@@ -247,17 +247,26 @@
 
   <script>
     let allEvents = [];
-    let currentView = 'logs'; // logs | alerts | threats
+    let currentView = 'alerts'; // logs (everything) | alerts (medium+high+critical, ברירת מחדל) | threats (high+critical)
     let chart;
 
     function goHome() { loadView('logs'); }
 
     function loadView(name) {
       currentView = name;
-      const titles = { logs: 'Recent events', alerts: 'Alerts (medium + high)', threats: 'Threats (high severity)', settings: 'Settings' };
+      const titles = {
+        logs: 'All logs (including low/informational)',
+        alerts: 'Alerts (medium, high & critical)',
+        threats: 'Threats (high & critical only)',
+        settings: 'Settings',
+      };
       document.getElementById('table-title').innerText = titles[name] || 'Recent events';
       document.getElementById('stat-view').innerText =
         name === 'alerts' ? 'Alerts' : name === 'threats' ? 'Threats' : name === 'settings' ? 'Settings' : 'All logs';
+      document.querySelectorAll('.side-btn').forEach(b => b.classList.remove('active'));
+      const btnMap = { logs: 1, alerts: 2, threats: 3, settings: 4 };
+      const idx = btnMap[name];
+      if (idx != null) document.querySelectorAll('.side-btn')[idx]?.classList.add('active');
       applyFilters();
     }
 
@@ -428,8 +437,8 @@
         const ei = String(e.source_ip || '').toLowerCase();
         const es = String(e.severity || '').toLowerCase();
 
-        if (currentView === 'alerts' && !es) return false;
-        if (currentView === 'threats' && es !== 'high') return false;
+        if (currentView === 'alerts' && !['critical','high','medium'].includes(es)) return false;
+        if (currentView === 'threats' && !['critical','high'].includes(es)) return false;
 
         return (!host || eh.includes(host)) &&
                (!user || eu.includes(user)) &&
