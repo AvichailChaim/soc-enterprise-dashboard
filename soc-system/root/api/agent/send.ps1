@@ -17,11 +17,19 @@ if (!(Test-Path $installDir)) { New-Item -ItemType Directory -Path $installDir -
 "Agent Started $(Get-Date)" | Out-File $debugFile -Append
 
 function Get-LocalLanIp {
-    # כתובת ה-IP המקומית (LAN) האמיתית של המחשב - לא 127.0.0.1, ולא כתובת link-local אוטומטית
+    # כתובת ה-IP המקומית (LAN) האמיתית של המחשב - לא 127.0.0.1, ולא כתובת link-local אוטומטית.
+    # קודם מנסים למצוא את המתאם עם Default Gateway מוגדר (סימן חזק שזו ההתחברות "האמיתית"
+    # לרשת/אינטרנט - Wi-Fi/Ethernet פיזי), כדי לא לבחור בטעות מתאם וירטואלי (VPN, Hyper-V, VMware וכו').
     try {
+        $cfg = Get-NetIPConfiguration -ErrorAction SilentlyContinue |
+            Where-Object { $_.IPv4DefaultGateway -and $_.NetAdapter.Status -eq "Up" } |
+            Select-Object -First 1
+        if ($cfg -and $cfg.IPv4Address) {
+            return $cfg.IPv4Address.IPAddress
+        }
+        # נפילה לאחור: כל כתובת IPv4 שאינה loopback/link-local
         $ip = (Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
             Where-Object { $_.IPAddress -notlike "127.*" -and $_.IPAddress -notlike "169.254.*" } |
-            Sort-Object -Property InterfaceMetric |
             Select-Object -First 1).IPAddress
         if (!$ip) { return "unknown" }
         return $ip
