@@ -92,7 +92,29 @@ if (Get-Service "Hayanuka_SIEM_Agent" -ErrorAction SilentlyContinue) {
 Write-Host "[*] Creating Windows background service (Hayanuka_SIEM_Agent) via NSSM..." -ForegroundColor Cyan
 & $nssmPath install "Hayanuka_SIEM_Agent" "C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe" "-ExecutionPolicy Bypass -WindowStyle Hidden -File `"$agentPath`""
 & $nssmPath set "Hayanuka_SIEM_Agent" Start SERVICE_AUTO_START
-& $nssmPath start "Hayanuka_SIEM_Agent"
+& $nssmPath set "Hayanuka_SIEM_Agent" AppThrottle 15000 | Out-Null
+& $nssmPath start "Hayanuka_SIEM_Agent" 2>$null | Out-Null
 
-Write-Host "[+] Hayanuka SIEM Agent deployed and running as a Windows service." -ForegroundColor Green
+# NSSM לפעמים מעלה את השירות למצב Paused ברגע הראשון (תקלה ידועה) - מתקנים אוטומטית
+Start-Sleep -Seconds 3
+$svc = Get-Service "Hayanuka_SIEM_Agent" -ErrorAction SilentlyContinue
+if ($svc -and $svc.Status -eq "Paused") {
+    Write-Host "[*] Service came up Paused (known NSSM quirk) - resuming..." -ForegroundColor Yellow
+    & $nssmPath resume "Hayanuka_SIEM_Agent" 2>$null | Out-Null
+    Start-Sleep -Seconds 2
+    $svc = Get-Service "Hayanuka_SIEM_Agent" -ErrorAction SilentlyContinue
+}
+if ($svc -and $svc.Status -ne "Running") {
+    Write-Host "[*] Service not running yet, retrying Start-Service..." -ForegroundColor Yellow
+    Start-Service "Hayanuka_SIEM_Agent" -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 2
+    $svc = Get-Service "Hayanuka_SIEM_Agent" -ErrorAction SilentlyContinue
+}
+
+if ($svc -and $svc.Status -eq "Running") {
+    Write-Host "[+] Hayanuka SIEM Agent deployed and running as a Windows service." -ForegroundColor Green
+} else {
+    Write-Host "[!] Service installed, but status is '$($svc.Status)' - not confirmed Running." -ForegroundColor Red
+    Write-Host "    Check $installDir\debug.txt, or run: Get-Service Hayanuka_SIEM_Agent" -ForegroundColor Red
+}
 Write-Host "    Logs: $installDir\debug.txt" -ForegroundColor DarkGray
