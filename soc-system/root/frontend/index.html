@@ -302,7 +302,12 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ username, password }),
         });
-        if (!res.ok) { showLogin('Invalid username or password.'); return false; }
+        if (!res.ok) {
+          let detail = `HTTP ${res.status}`;
+          try { const errBody = await res.json(); if (errBody && errBody.detail) detail = errBody.detail; } catch (e2) {}
+          showLogin(`Login failed: ${detail}`);
+          return false;
+        }
         const data = await res.json();
         localStorage.setItem(SESSION_KEY, data.token);
         hideLogin();
