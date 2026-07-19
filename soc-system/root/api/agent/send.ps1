@@ -16,6 +16,20 @@ if (!(Test-Path $installDir)) { New-Item -ItemType Directory -Path $installDir -
 
 "Agent Started $(Get-Date)" | Out-File $debugFile -Append
 
+function Get-LocalLanIp {
+    # כתובת ה-IP המקומית (LAN) האמיתית של המחשב - לא 127.0.0.1, ולא כתובת link-local אוטומטית
+    try {
+        $ip = (Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+            Where-Object { $_.IPAddress -notlike "127.*" -and $_.IPAddress -notlike "169.254.*" } |
+            Sort-Object -Property InterfaceMetric |
+            Select-Object -First 1).IPAddress
+        if (!$ip) { return "unknown" }
+        return $ip
+    } catch { return "unknown" }
+}
+$LAN_IP = Get-LocalLanIp
+"LAN IP detected: $LAN_IP" | Out-File $debugFile -Append
+
 $lastCheckSecurity = (Get-Date).AddMinutes(-5)
 $lastCheckSystem   = (Get-Date).AddMinutes(-5)
 $lastCheckDefender = (Get-Date).AddMinutes(-5)
@@ -23,7 +37,7 @@ $loopCount = 0
 
 function Send-SiemEvent {
     param($user, $action, $source, $ip)
-    $body = @{ user = $user; action = $action; source = $source; ip = $ip } | ConvertTo-Json
+    $body = @{ user = $user; action = $action; source = $source; ip = $ip; lan_ip = $LAN_IP } | ConvertTo-Json
     try {
         Invoke-RestMethod -Uri $SIEM_EVENT -Method Post -Body $body -ContentType "application/json" `
             -Headers @{ "X-Agent-Token" = $AGENT_TOKEN } -TimeoutSec 5 | Out-Null
