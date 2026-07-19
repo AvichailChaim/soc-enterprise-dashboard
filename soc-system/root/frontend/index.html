@@ -220,6 +220,7 @@
                 <th>User</th>
                 <th>Source IP</th>
                 <th>Severity</th>
+                <th style="width:32%">Reason</th>
                 <th>MITRE</th>
                 <th>Last triggered</th>
                 <th></th>
@@ -280,23 +281,23 @@
         .then(data => {
           const e = data.event || {};
           const related = data.related || [];
-          const kv = (k, v) => `<div class="kv-row"><span class="kv-key">${k}</span><span>${v ?? '-'}</span></div>`;
+          const kv = (k, v) => `<div class="kv-row"><span class="kv-key">${escapeHtml(k)}</span><span>${v ?? '-'}</span></div>`;
           body.innerHTML = `
             ${kv('Event ID', e.id)}
-            ${kv('Time', e.timestamp)}
-            ${kv('Action', e.action)}
-            ${kv('User', e.user)}
-            ${kv('Host', e.host)}
-            ${kv('Source IP', e.source_ip)}
-            ${kv('Severity', `<span class="${sevColor(e.severity)}">${e.severity || 'Info'}</span>`)}
+            ${kv('Time', escapeHtml(e.timestamp))}
+            ${kv('Action', escapeHtml(e.action))}
+            ${kv('User', escapeHtml(e.user))}
+            ${kv('Host', escapeHtml(e.host))}
+            ${kv('Source IP', escapeHtml(e.source_ip))}
+            ${kv('Severity', `<span class="${sevColor(e.severity)}">${escapeHtml(e.severity || 'Info')}</span>`)}
             ${kv('Score', e.score)}
-            ${kv('MITRE technique', e.mitre || '-')}
-            ${kv('Description', e.description)}
+            ${kv('MITRE technique', escapeHtml(e.mitre || '-'))}
+            ${kv('Description', escapeHtml(e.description))}
             <div class="title mt-3 mb-2">Related events (same user / IP / host, ±30min)</div>
             ${related.length ? related.map(r => `
               <div class="related-item">
-                <span>${r.timestamp ? r.timestamp.replace('T',' ').slice(0,19) : ''} — ${r.action}</span>
-                <span class="${sevColor(r.severity)}">${r.severity || ''}</span>
+                <span>${r.timestamp ? r.timestamp.replace('T',' ').slice(0,19) : ''} — ${escapeHtml(r.action)}</span>
+                <span class="${sevColor(r.severity)}">${escapeHtml(r.severity || '')}</span>
               </div>`).join('') : '<div class="subtitle">No related events found in this window.</div>'}
           `;
         })
@@ -332,6 +333,10 @@
         }
       }
     });
+
+    function escapeHtml(s) {
+      return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
+    }
 
     function sevColor(sev) {
       const s = String(sev || '').toLowerCase();
@@ -372,11 +377,11 @@
       const topUsers = (stats && stats.top_users) || [];
 
       document.getElementById('top-ips').innerHTML = topIps.length ? topIps.map(row => `
-        <li><button class="clickable-badge" onclick="setQuickFilter('','','${row.ip}','')">${row.ip}</button><span class="text-sky-300">${row.c}</span></li>
+        <li><button class="clickable-badge" onclick="setQuickFilter('','','${escapeHtml(row.ip).replace(/'/g,"\\'")}','')">${escapeHtml(row.ip)}</button><span class="text-sky-300">${row.c}</span></li>
       `).join('') : '<li class="subtitle">No data yet</li>';
 
       document.getElementById('top-users').innerHTML = topUsers.length ? topUsers.map(row => `
-        <li><button class="clickable-badge" onclick="setQuickFilter('','${row.user_name}','','')">${row.user_name}</button><span class="text-emerald-300">${row.c}</span></li>
+        <li><button class="clickable-badge" onclick="setQuickFilter('','${escapeHtml(row.user_name).replace(/'/g,"\\'")}','','')">${escapeHtml(row.user_name)}</button><span class="text-emerald-300">${row.c}</span></li>
       `).join('') : '<li class="subtitle">No data yet</li>';
 
       const mitreCounts = {};
@@ -391,9 +396,9 @@
 
     function renderSignals(events) {
       document.getElementById('recent-signals').innerHTML = (events || []).slice(0, 4).map(e => `
-        <li class="click-row" onclick="openInvestigation(${e.id})">
-          <span>${e.action || 'event'}</span>
-          <span class="${sevColor(e.severity)}">${e.severity || '-'}</span>
+        <li class="click-row" onclick="openInvestigation(${e.id})" title="${escapeHtml(e.description || '')}">
+          <span>${escapeHtml(e.action || 'event')}</span>
+          <span class="${sevColor(e.severity)}">${escapeHtml(e.severity || '-')}</span>
         </li>
       `).join('');
     }
@@ -429,14 +434,23 @@
     function renderTable(events) {
       document.getElementById('logs-table').innerHTML = (events || []).map(l => {
         const time = l.timestamp ? l.timestamp.replace('T', ' ').slice(0,19) : '-';
+        const host = escapeHtml(l.host || '-');
+        const user = escapeHtml(l.user || '-');
+        const ip = escapeHtml(l.source_ip || '-');
+        const action = escapeHtml(l.action || '-');
+        const mitre = escapeHtml(l.mitre || '-');
+        const reason = escapeHtml(l.description || 'Normal system activity.');
+        const sevLower = (l.severity || '').toLowerCase();
+        const filterCall = `setQuickFilter('${host.replace(/'/g,"\\'")}','${user.replace(/'/g,"\\'")}','${ip.replace(/'/g,"\\'")}','${sevLower}')`;
         return `
           <tr class="click-row">
-            <td onclick="setQuickFilter('${l.host || ''}','${l.user || ''}','${l.source_ip || ''}','${(l.severity || '').toLowerCase()}')">${l.action || '-'}</td>
-            <td onclick="setQuickFilter('${l.host || ''}','${l.user || ''}','${l.source_ip || ''}','${(l.severity || '').toLowerCase()}')">${l.host || '-'}</td>
-            <td onclick="setQuickFilter('${l.host || ''}','${l.user || ''}','${l.source_ip || ''}','${(l.severity || '').toLowerCase()}')">${l.user || '-'}</td>
-            <td onclick="setQuickFilter('${l.host || ''}','${l.user || ''}','${l.source_ip || ''}','${(l.severity || '').toLowerCase()}')">${l.source_ip || '-'}</td>
-            <td class="${sevColor(l.severity)}">${l.severity || '-'}</td>
-            <td class="text-slate-400">${l.mitre || '-'}</td>
+            <td onclick="${filterCall}">${action}</td>
+            <td onclick="${filterCall}">${host}</td>
+            <td onclick="${filterCall}">${user}</td>
+            <td onclick="${filterCall}">${ip}</td>
+            <td class="${sevColor(l.severity)}">${escapeHtml(l.severity || '-')}</td>
+            <td class="text-slate-300" style="white-space:normal" title="${reason}">${reason}</td>
+            <td class="text-slate-400">${mitre}</td>
             <td class="text-slate-400">${time}</td>
             <td><button class="details-btn" onclick="openInvestigation(${l.id})">Investigate</button></td>
           </tr>
