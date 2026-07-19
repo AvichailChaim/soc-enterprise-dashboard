@@ -187,7 +187,9 @@ def analyze_event(e, cur):
     description = " | ".join(parts) if parts else "Normal system activity."
     mitre = MITRE_MAP.get(e["action"], "")
 
-    if score >= 70:
+    if score >= 90:
+        severity = "Critical"
+    elif score >= 70:
         severity = "High"
     elif score >= 40:
         severity = "Medium"
@@ -294,7 +296,7 @@ def get_stats():
 
     cur.execute("SELECT count(*) FROM events")
     total_events = cur.fetchone()[0]
-    cur.execute("SELECT count(*) FROM alerts WHERE severity = 'High'")
+    cur.execute("SELECT count(*) FROM alerts WHERE severity IN ('Critical', 'High')")
     critical_alerts = cur.fetchone()[0]
     cur.execute("SELECT count(*) FROM alerts WHERE severity = 'Medium'")
     medium_alerts = cur.fetchone()[0]
@@ -355,7 +357,7 @@ def get_stats():
         logs_series[bi] += 1
         if severity:
             alerts_series[bi] += 1
-        if severity == "High":
+        if severity in ("High", "Critical"):
             anomalies_series[bi] += 1
         for cat, actions in categories.items():
             if action in actions:
