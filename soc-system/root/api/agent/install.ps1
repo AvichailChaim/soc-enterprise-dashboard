@@ -259,6 +259,7 @@ function Send-TamperAlert(`$reasonText) {
 try {
     `$cmdResp = Invoke-RestMethod -Uri "https://soc-enterprise-dashboard-hayanuka.vercel.app/api/agent-command?host=`$(`$env:COMPUTERNAME)" ``
         -Headers @{ "X-Agent-Token" = "$watchdogTokenLine" } -TimeoutSec 10 -ErrorAction Stop
+    "`$(Get-Date) Watchdog: checked for remote commands - found: `$(if (`$cmdResp -and `$cmdResp.command) { `$cmdResp.command } else { 'none' })" | Out-File `$debugFile -Append
     if (`$cmdResp -and `$cmdResp.command) {
         `$passOk = (Test-Path `$hashFile) -and `$cmdResp.password -and ((Get-Sha256Hex `$cmdResp.password) -eq (Get-Content `$hashFile -Raw).Trim())
         if (-not `$passOk) {
@@ -296,7 +297,9 @@ try {
             }
         }
     }
-} catch {}
+} catch {
+    "`$(Get-Date) Watchdog: remote-command check failed: `$(`$_.Exception.Message)" | Out-File `$debugFile -Append
+}
 
 # חלון תחזוקה מבוקר-סיסמה (נפתח ע"י control.ps1 -Action Stop, או "Stop" מהדשבורד) - כל עוד הוא בתוקף, לא משחזרים ולא מתריעים
 `$maintenanceActive = `$false
