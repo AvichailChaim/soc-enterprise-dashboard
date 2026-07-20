@@ -102,8 +102,22 @@ def ensure_schema():
     conn.close()
 
 
+def cleanup_legacy_hosts():
+    """סוכנים ישנים (לפני התיקון) שלחו host שמכיל את סוג האירוע (למשל "MOSHEBI-WIN10 (Event ID 4624)")
+    במקום שם מחשב נקי - מה שגרם לאותו מחשב להופיע בכמה שורות שונות בעמוד Computers, ולפקודות מרחוק
+    (Stop/Start/Uninstall) שלא מגיעות ליעד הנכון כי ה-Watchdog מחפש לפי שם המחשב הנקי. מנקים את זה
+    אחת ולתמיד (אידמפוטנטי - בטוח להריץ בכל cold start, אין השפעה אחרי שהניקוי כבר בוצע)."""
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute(r"UPDATE events SET host = regexp_replace(host, '\s*\(Event ID \d+\)\s*$', '') WHERE host ~ '\(Event ID \d+\)\s*$'")
+    conn.commit()
+    cur.close()
+    conn.close()
+
+
 try:
     ensure_schema()
+    cleanup_legacy_hosts()
 except Exception as _e:
     print(f"[-] schema init failed: {_e}")
 
