@@ -210,6 +210,14 @@ if (-not $NoProtect) {
 `$installDir = "$installDir"
 `$debugFile = "`$installDir\debug.txt"
 `$maintenanceFile = "`$installDir\maintenance.flag"
+`$hashFile = "`$installDir\uninstall.hash"
+`$watchdogTaskName = "$watchdogTask"
+
+function Get-Sha256Hex(`$text) {
+    `$sha = [System.Security.Cryptography.SHA256]::Create()
+    `$bytes = `$sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes(`$text))
+    return ([System.BitConverter]::ToString(`$bytes) -replace '-', '').ToLower()
+}
 
 function Send-TamperAlert(`$reasonText) {
     try {
@@ -219,7 +227,52 @@ function Send-TamperAlert(`$reasonText) {
     } catch {}
 }
 
-# חלון תחזוקה מבוקר-סיסמה (נפתח ע"י control.ps1 -Action Stop) - כל עוד הוא בתוקף, לא משחזרים ולא מתריעים
+# ===== פקודות מרוחקות מהדשבורד (Computers page: Stop / Start / Uninstall) =====
+# נבדק בכל ריצה (כל 5 דק'), בלי קשר למצב השירות. הפקודה מבוצעת רק אם הסיסמה שנשלחה
+# מהדשבורד תואמת ל-hash המקומי - כלומר גישה לדשבורד לבדה לא מספיקה כדי להסיר/לעצור.
+try {
+    `$cmdResp = Invoke-RestMethod -Uri "https://soc-enterprise-dashboard-hayanuka.vercel.app/api/agent-command?host=`$(`$env:COMPUTERNAME)" ``
+        -Headers @{ "X-Agent-Token" = "$watchdogTokenLine" } -TimeoutSec 10 -ErrorAction Stop
+    if (`$cmdResp -and `$cmdResp.command) {
+        `$passOk = (Test-Path `$hashFile) -and `$cmdResp.password -and ((Get-Sha256Hex `$cmdResp.password) -eq (Get-Content `$hashFile -Raw).Trim())
+        if (-not `$passOk) {
+            "`$(Get-Date) Remote command '`$(`$cmdResp.command)' received but password did NOT match local hash - ignored." | Out-File `$debugFile -Append
+        } else {
+            "`$(Get-Date) Remote command '`$(`$cmdResp.command)' verified - executing." | Out-File `$debugFile -Append
+            if (`$cmdResp.command -eq "stop") {
+                `$minutes = if (`$cmdResp.maintenance_minutes) { `$cmdResp.maintenance_minutes } else { 60 }
+                (Get-Date).ToUniversalTime().AddMinutes(`$minutes).ToString("o") | Out-File `$maintenanceFile -Force
+                Stop-Service "Hayanuka_SIEM_Agent" -Force -ErrorAction SilentlyContinue
+            } elseif (`$cmdResp.command -eq "start") {
+                Remove-Item `$maintenanceFile -ErrorAction SilentlyContinue
+                Start-Service "Hayanuka_SIEM_Agent" -ErrorAction SilentlyContinue
+            } elseif (`$cmdResp.command -eq "uninstall") {
+                `$q = [char]34
+                `$helperPath = Join-Path `$env:TEMP "hayanuka_remote_removal.ps1"
+                `$helperLines = @(
+                    "try {"
+                    "    Stop-Service `${q}Hayanuka_SIEM_Agent`${q} -Force -ErrorAction SilentlyContinue"
+                    "    if (Test-Path `${q}`$installDir\nssm.exe`${q}) { & `${q}`$installDir\nssm.exe`${q} remove `${q}Hayanuka_SIEM_Agent`${q} confirm 2>`$null | Out-Null }"
+                    "    Unregister-ScheduledTask -TaskName `${q}`$watchdogTaskName`${q} -Confirm:`$false -ErrorAction SilentlyContinue"
+                    "    Start-Sleep -Seconds 1"
+                    "    Remove-Item -Path `${q}`$installDir`${q} -Recurse -Force -ErrorAction SilentlyContinue"
+                    "} catch {}"
+                )
+                Set-Content -Path `$helperPath -Value (`$helperLines -join "``n") -Force
+                `$rTaskName = "Hayanuka_Remote_Removal_`$([guid]::NewGuid().ToString('N').Substring(0,8))"
+                `$argValue = "-ExecutionPolicy Bypass -NoProfile -File `$q`$helperPath`$q"
+                `$rAction = New-ScheduledTaskAction -Execute "powershell.exe" -Argument `$argValue
+                `$rPrincipal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
+                Register-ScheduledTask -TaskName `$rTaskName -Action `$rAction -Principal `$rPrincipal -Force | Out-Null
+                Start-ScheduledTask -TaskName `$rTaskName
+                "`$(Get-Date) Remote uninstall triggered via dashboard - agent will be removed shortly." | Out-File `$debugFile -Append
+                exit
+            }
+        }
+    }
+} catch {}
+
+# חלון תחזוקה מבוקר-סיסמה (נפתח ע"י control.ps1 -Action Stop, או "Stop" מהדשבורד) - כל עוד הוא בתוקף, לא משחזרים ולא מתריעים
 `$maintenanceActive = `$false
 if (Test-Path `$maintenanceFile) {
     try {
