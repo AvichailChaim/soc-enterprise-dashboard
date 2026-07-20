@@ -303,6 +303,14 @@ def logout(x_session_token: Optional[str] = Header(default=None)):
     return {"status": "ok"}
 
 
+@app.get("/api/agent-token")
+def get_agent_token(x_session_token: Optional[str] = Header(default=None)):
+    """מאפשר ל-install.ps1 לשלוף את AGENT_TOKEN הנוכחי אוטומטית ע"י התחברות עם משתמש/סיסמה
+    של הדשבורד (שהמנהל בוודאות זוכר), במקום להעתיק ידנית ערך סודי שוורסל מסתיר אחרי השמירה."""
+    check_session(x_session_token)
+    return {"agent_token": AGENT_TOKEN}
+
+
 def get_wan_ip(request: Request) -> Optional[str]:
     """ה-WAN IP האמיתי נלקח מהבקשה עצמה בצד השרת (לא ממה שהסוכן מדווח על עצמו) -
     כך שאי אפשר לזייף אותו, ותמיד יהיה מדויק בהתאם למי שבאמת שלח את הבקשה ל-Vercel."""
