@@ -1,7 +1,10 @@
 # install.ps1 - מורץ כמנהל מערכת (Administrator) בכל תחנת קצה בארגון, כולל מחשבים מרוחקים.
 #
-# שימוש:
-#   .\install.ps1 -AgentToken "הטוקן-הסודי-שהוגדר-ב-Vercel"
+# שימוש (אופציה מומלצת - לא צריך להעתיק את AGENT_TOKEN בכלל, רק את המשתמש/סיסמה של הדשבורד עצמו):
+#   .\install.ps1 -AdminUsername "admin" -AdminPassword "הסיסמה-שלך-לדשבורד" -UninstallPassword "סיסמת-הסרה"
+#
+# שימוש (אופציה ידנית - אם יש לך את AGENT_TOKEN המדויק):
+#   .\install.ps1 -AgentToken "הטוקן-הסודי-שהוגדר-ב-Vercel" -UninstallPassword "סיסמת-הסרה"
 #
 # הקובץ הזה עצמאי: אם send.ps1 ו/או nssm.exe לא נמצאים באותה תיקייה, הוא מוריד אותם
 # אוטומטית מהאינטרנט. כלומר אפשר להעתיק *רק* את הקובץ הזה למחשב מרוחק (למשל דרך RDP,
@@ -11,9 +14,32 @@
 
 param(
     [string]$AgentToken = "",
+    [string]$AdminUsername = "",       # במקום AgentToken: משתמש/סיסמה של הדשבורד עצמו - שאותם אתה בוודאות זוכר
+    [string]$AdminPassword = "",       # (בניגוד ל-AGENT_TOKEN שוורסל מסתיר אחרי השמירה) - הסקריפט ישלוף את הטוקן לבד
     [string]$UninstallPassword = "",   # מגדיר/מעדכן את הסיסמה הנדרשת כדי להסיר או להתקין-מחדש את השירות
     [switch]$NoProtect                 # דגל לבדיקות בלבד - מדלג על הקשחת ההרשאות ועל דרישת הסיסמה
 )
+
+$DASHBOARD_BASE = "https://soc-enterprise-dashboard-hayanuka.vercel.app"
+
+if ($AgentToken -eq "" -and $AdminUsername -ne "" -and $AdminPassword -ne "") {
+    Write-Host "[*] Fetching AGENT_TOKEN automatically using dashboard admin login..." -ForegroundColor Cyan
+    try {
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls13
+        $loginBody = @{ username = $AdminUsername; password = $AdminPassword } | ConvertTo-Json
+        $loginResp = Invoke-RestMethod -Uri "$DASHBOARD_BASE/api/login" -Method Post -Body $loginBody -ContentType "application/json" -ErrorAction Stop
+        $tokenResp = Invoke-RestMethod -Uri "$DASHBOARD_BASE/api/agent-token" -Headers @{ "X-Session-Token" = $loginResp.token } -ErrorAction Stop
+        if ($tokenResp.agent_token) {
+            $AgentToken = $tokenResp.agent_token
+            Write-Host "[+] AGENT_TOKEN fetched successfully - no manual copy-paste needed." -ForegroundColor Green
+        } else {
+            Write-Host "[!] Dashboard login succeeded, but no AGENT_TOKEN is configured on the server." -ForegroundColor Yellow
+        }
+    } catch {
+        Write-Host "[!] Could not fetch AGENT_TOKEN automatically (wrong admin username/password?): $($_.Exception.Message)" -ForegroundColor Red
+        exit 1
+    }
+}
 
 $installDir  = "C:\Hayanuka_SIEM"   # בכוונה בלי רווח בנתיב (כגון "Program Files") - זו הייתה סיבת הבאג
 $agentPath   = "$installDir\send.ps1"
