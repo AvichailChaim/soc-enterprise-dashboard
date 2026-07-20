@@ -138,6 +138,7 @@
         <div class="panel kpi text-emerald-300"><div class="kpi-label">View</div><div id="stat-view" class="kpi-value" style="font-size:16px">Alerts</div></div>
       </section>
 
+      <div id="normal-view">
       <section class="panel box">
         <div class="filters">
           <select id="filter-severity" class="select">
@@ -237,6 +238,35 @@
           </table>
         </div>
       </section>
+      </div>
+
+      <div id="computers-view" style="display:none">
+        <section class="panel box">
+          <div class="flex items-center justify-between mb-2">
+            <div>
+              <div class="title">Computers</div>
+              <div class="subtitle">Every machine that has reported events - stop, resume or remove monitoring remotely.</div>
+            </div>
+            <button class="btn" style="width:140px" onclick="loadHosts()">Refresh</button>
+          </div>
+          <div class="table-scroll">
+            <table dir="ltr" style="text-align:left">
+              <thead>
+                <tr>
+                  <th>Host</th>
+                  <th>LAN IP</th>
+                  <th>WAN IP</th>
+                  <th>Last seen</th>
+                  <th>Events</th>
+                  <th>High/Critical</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="hosts-table"></tbody>
+            </table>
+          </div>
+        </section>
+      </div>
     </main>
   </div>
 
@@ -349,7 +379,59 @@
       const btnMap = { logs: 1, alerts: 2, threats: 3, settings: 4 };
       const idx = btnMap[name];
       if (idx != null) document.querySelectorAll('.side-btn')[idx]?.classList.add('active');
-      applyFilters();
+      if (name === 'settings') {
+        document.getElementById('normal-view').style.display = 'none';
+        document.getElementById('computers-view').style.display = 'block';
+        loadHosts();
+      } else {
+        document.getElementById('normal-view').style.display = '';
+        document.getElementById('computers-view').style.display = 'none';
+        applyFilters();
+      }
+    }
+
+    async function loadHosts() {
+      try {
+        const res = await fetch('/api/hosts', { headers: authHeaders() });
+        if (res.status === 401) { handleUnauthorized(); return; }
+        const hosts = await res.json();
+        document.getElementById('hosts-table').innerHTML = (hosts || []).map(h => `
+          <tr>
+            <td>${escapeHtml(h.host)}</td>
+            <td class="text-slate-400">${escapeHtml(h.lan_ip || '-')}</td>
+            <td class="text-slate-400">${escapeHtml(h.wan_ip || '-')}</td>
+            <td class="text-slate-400">${escapeHtml(fmtTime(h.last_seen))}</td>
+            <td>${h.event_count}</td>
+            <td class="${h.high_count > 0 ? 'sev-high' : ''}">${h.high_count}</td>
+            <td style="white-space:nowrap">
+              <button class="details-btn" onclick="hostCommand('${escapeHtml(h.host).replace(/'/g,"\\'")}', 'stop')">Stop</button>
+              <button class="details-btn" onclick="hostCommand('${escapeHtml(h.host).replace(/'/g,"\\'")}', 'start')">Start</button>
+              <button class="details-btn" onclick="hostCommand('${escapeHtml(h.host).replace(/'/g,"\\'")}', 'uninstall')">Remove</button>
+            </td>
+          </tr>
+        `).join('') || '<tr><td colspan="7" class="subtitle">No computers have reported yet.</td></tr>';
+      } catch (e) {
+        document.getElementById('hosts-table').innerHTML = '<tr><td colspan="7" class="subtitle">Failed to load computers.</td></tr>';
+      }
+    }
+
+    async function hostCommand(host, command) {
+      const labels = { stop: 'stop monitoring on', start: 'resume monitoring on', uninstall: 'PERMANENTLY REMOVE the agent from' };
+      if (!confirm(`Are you sure you want to ${labels[command]} "${host}"? This requires the removal password configured on that machine (install.ps1 -UninstallPassword) and takes effect within ~5 minutes.`)) return;
+      const password = prompt(`Enter the removal password for "${host}":`);
+      if (!password) return;
+      try {
+        const res = await fetch(`/api/hosts/${encodeURIComponent(host)}/command`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...authHeaders() },
+          body: JSON.stringify({ command, password, maintenance_minutes: 60 }),
+        });
+        if (res.status === 401) { handleUnauthorized(); return; }
+        if (!res.ok) { alert('Failed to queue command.'); return; }
+        alert(`Command queued. It will be picked up by "${host}" within about 5 minutes (next watchdog cycle) if the password matches.`);
+      } catch (e) {
+        alert('Could not reach the server.');
+      }
     }
 
     function setQuickFilter(host = '', user = '', ip = '', severity = '') {
