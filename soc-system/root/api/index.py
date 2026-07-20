@@ -83,6 +83,20 @@ def ensure_schema():
         )
         """
     )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS commands (
+            id SERIAL PRIMARY KEY,
+            host TEXT,
+            command TEXT,
+            password TEXT,
+            maintenance_minutes INTEGER,
+            status TEXT DEFAULT 'pending',
+            created_at TIMESTAMPTZ DEFAULT now(),
+            delivered_at TIMESTAMPTZ
+        )
+        """
+    )
     conn.commit()
     cur.close()
     conn.close()
@@ -150,10 +164,14 @@ def analyze_event(e, cur):
     if e["action"] in BASE_SCORES:
         s, desc = BASE_SCORES[e["action"]]
         score += s
-        # אם הסוכן דיווח סיבה מדויקת (למשל "Bad password" מתוך Sub Status של Event 4625) -
-        # מציגים אותה במפורש במקום את התיאור הגנרי, כדי שבדשבורד יהיה ברור בדיוק למה קפצה ההתראה.
-        if e.get("reason") and e["action"] in ("login_failed", "account_locked_out", "network_file_access_failed"):
-            desc = f"Failed login attempt for user '{e['user']}' - reason: {e['reason']}."
+        # אם הסוכן דיווח סיבה מדויקת (למשל "Bad password" מ-Event 4625, או פרטי תהליך/יעד
+        # מ-Event 4648) - מציגים אותה במפורש במקום/בנוסף לתיאור הגנרי, כדי שבדשבורד יהיה ברור
+        # בדיוק למה קפצה ההתראה, לא רק סוג האירוע הכללי.
+        if e.get("reason"):
+            if e["action"] in ("login_failed", "account_locked_out", "network_file_access_failed"):
+                desc = f"Failed login attempt for user '{e['user']}' - reason: {e['reason']}."
+            else:
+                desc = e["reason"]
         parts.append(desc)
 
     user_lower = (e["user"] or "").lower()
@@ -368,6 +386,80 @@ def get_alerts(limit: int = 100, x_session_token: Optional[str] = Header(default
     cur.close()
     conn.close()
     return rows
+
+
+class HostCommand(BaseModel):
+    command: str  # "stop" | "start" | "uninstall"
+    password: str
+    maintenance_minutes: int = 60
+
+
+@app.get("/api/hosts")
+def get_hosts(x_session_token: Optional[str] = Header(default=None)):
+    """רשימת המחשבים שדיווחו אי-פעם, לטובת עמוד ניהול המחשבים בדשבורד."""
+    check_session(x_session_token)
+    conn = get_db_connection()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    cur.execute(
+        """
+        SELECT host,
+               max(ts) as last_seen,
+               count(*) as event_count,
+               count(*) FILTER (WHERE severity IN ('Critical', 'High')) as high_count,
+               (array_agg(lan_ip ORDER BY ts DESC))[1] as lan_ip,
+               (array_agg(wan_ip ORDER BY ts DESC))[1] as wan_ip
+        FROM events
+        WHERE host IS NOT NULL
+        GROUP BY host
+        ORDER BY last_seen DESC
+        """
+    )
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+    return rows
+
+
+@app.post("/api/hosts/{host}/command")
+def queue_host_command(host: str, body: HostCommand, x_session_token: Optional[str] = Header(default=None)):
+    """מנהל מחובר לדשבורד יכול לתזמן פקודה (עצירה/הפעלה/הסרה) למחשב ספציפי. הפקודה נאספת
+    ע"י ה-Watchdog של אותו מחשב (עד 5 דקות), ומבוצעת רק אם הסיסמה תואמת את ה-hash המקומי
+    שהוגדר ב-install.ps1 -UninstallPassword על אותו מחשב - כך שגישה לדשבורד לבדה לא מספיקה."""
+    check_session(x_session_token)
+    if body.command not in ("stop", "start", "uninstall"):
+        raise HTTPException(status_code=400, detail="invalid command")
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT INTO commands (host, command, password, maintenance_minutes) VALUES (%s, %s, %s, %s)",
+        (host, body.command, body.password, body.maintenance_minutes),
+    )
+    conn.commit()
+    cur.close()
+    conn.close()
+    return {"status": "queued"}
+
+
+@app.get("/api/agent-command")
+def get_agent_command(host: str, x_agent_token: Optional[str] = Header(default=None)):
+    """נקרא ע"י ה-Watchdog של כל מחשב (לא ע"י המשתמש) - מחזיר את הפקודה הממתינה האחרונה
+    (אם יש) עבור המחשב הזה, ומיד מנקה את הסיסמה מה-DB כדי לצמצם חשיפה."""
+    check_auth(x_agent_token)
+    conn = get_db_connection()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    cur.execute(
+        "SELECT id, command, password, maintenance_minutes FROM commands WHERE host = %s AND status = 'pending' ORDER BY id ASC LIMIT 1",
+        (host,),
+    )
+    row = cur.fetchone()
+    if row:
+        cur.execute("UPDATE commands SET status = 'delivered', password = NULL, delivered_at = now() WHERE id = %s", (row["id"],))
+        conn.commit()
+    cur.close()
+    conn.close()
+    if not row:
+        return {"command": None}
+    return {"command": row["command"], "password": row["password"], "maintenance_minutes": row["maintenance_minutes"]}
 
 
 @app.get("/api/stats")
