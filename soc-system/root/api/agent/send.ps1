@@ -162,9 +162,16 @@ while ($true) {
                         $action = "account_locked_out"
                     }
                     4648 {
-                        # התחברות עם קרדנשיאלס מפורשים - סימן אפשרי לתנועה רוחבית / pass-the-hash
+                        # התחברות עם קרדנשיאלס מפורשים - סימן אפשרי לתנועה רוחבית / pass-the-hash.
+                        # שולפים גם מי ביצע את זה (SubjectUserName), איזה תהליך (ProcessName) ולאיזה
+                        # יעד (TargetServerName), כדי שההתראה תגיד בדיוק מה קרה ולא רק "יש חשד".
                         $targetUser = ($xml.Event.EventData.Data | Where-Object { $_.Name -eq "TargetUserName" }).'#text'
                         $ip = ($xml.Event.EventData.Data | Where-Object { $_.Name -eq "IpAddress" }).'#text'
+                        $subjectUser = ($xml.Event.EventData.Data | Where-Object { $_.Name -eq "SubjectUserName" }).'#text'
+                        $processName = ($xml.Event.EventData.Data | Where-Object { $_.Name -eq "ProcessName" }).'#text'
+                        $targetServer = ($xml.Event.EventData.Data | Where-Object { $_.Name -eq "TargetServerName" }).'#text'
+                        $procShort = if ($processName) { Split-Path $processName -Leaf } else { "unknown process" }
+                        $reason = "Process '$procShort' on this machine (run by '$subjectUser') explicitly authenticated as user '$targetUser'" + $(if ($targetServer -and $targetServer -notlike "localhost*") { " to target '$targetServer'" } else { "" }) + ". Common legitimate causes: Run-as/elevation with different credentials, saved-credential RDP/network drive, or a scheduled task/service configured with explicit credentials. Verify this matches something you or IT actually did."
                         $action = "explicit_credential_logon"
                     }
                     4672 {
