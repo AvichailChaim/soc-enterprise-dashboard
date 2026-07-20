@@ -309,10 +309,17 @@ if (-not `$svc) {
 
     Unregister-ScheduledTask -TaskName $watchdogTask -Confirm:$false -ErrorAction SilentlyContinue
     $wdAction = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-ExecutionPolicy Bypass -NoProfile -File `"$watchdogScriptPath`""
-    $wdTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 5) -RepetitionDuration ([TimeSpan]::MaxValue)
+    # שים לב: [TimeSpan]::MaxValue שובר את ה-Register-ScheduledTask (חורג ממגבלת ה-XML של Task
+    # Scheduler, שגיאה "Duration:P99999999DT23H59M59S") - במקום זה משתמשים במשך ארוך אך תקין (10 שנים).
+    $wdTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 5) -RepetitionDuration (New-TimeSpan -Days 3650)
     $wdPrincipal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
-    Register-ScheduledTask -TaskName $watchdogTask -Action $wdAction -Trigger $wdTrigger -Principal $wdPrincipal -Force | Out-Null
-    Write-Host "[+] Watchdog registered." -ForegroundColor Green
+    try {
+        Register-ScheduledTask -TaskName $watchdogTask -Action $wdAction -Trigger $wdTrigger -Principal $wdPrincipal -Force -ErrorAction Stop | Out-Null
+        Write-Host "[+] Watchdog registered." -ForegroundColor Green
+    } catch {
+        Write-Host "[!] Failed to register the watchdog: $($_.Exception.Message)" -ForegroundColor Red
+        Write-Host "    Tamper-detection and remote Stop/Start/Uninstall from the dashboard will NOT work until this is fixed." -ForegroundColor Red
+    }
     Write-Host "[i] To fully uninstall later, use uninstall.ps1 (requires the removal password)." -ForegroundColor DarkGray
 } else {
     Write-Host "[i] -NoProtect used: service left unprotected (no ACL hardening, no password, no watchdog)." -ForegroundColor DarkGray
