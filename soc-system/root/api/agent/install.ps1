@@ -279,8 +279,8 @@ try {
                 `$helperLines = @(
                     "try {"
                     "    Stop-Service `${q}Hayanuka_SIEM_Agent`${q} -Force -ErrorAction SilentlyContinue"
-                    "    if (Test-Path `${q}`$installDir\nssm.exe`${q}) { & `${q}`$installDir\nssm.exe`${q} remove `${q}Hayanuka_SIEM_Agent`${q} confirm 2>`$null | Out-Null }"
-                    "    Unregister-ScheduledTask -TaskName `${q}`$watchdogTaskName`${q} -Confirm:`$false -ErrorAction SilentlyContinue"
+                    "    if (Test-Path `${q}`$installDir\nssm.exe`${q}) { & `${q}`$installDir\nssm.exe`${q} remove `${q}Hayanuka_SIEM_Agent`${q} confirm 2>``$null | Out-Null }"
+                    "    Unregister-ScheduledTask -TaskName `${q}`$watchdogTaskName`${q} -Confirm:``$false -ErrorAction SilentlyContinue"
                     "    Start-Sleep -Seconds 1"
                     "    Remove-Item -Path `${q}`$installDir`${q} -Recurse -Force -ErrorAction SilentlyContinue"
                     "} catch {}"
