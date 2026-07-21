@@ -463,9 +463,12 @@ def queue_host_command(host: str, body: HostCommand, x_session_token: Optional[s
 
 
 @app.get("/api/agent-command")
-def get_agent_command(host: str, x_agent_token: Optional[str] = Header(default=None)):
+def get_agent_command(host: str, response: Response, x_agent_token: Optional[str] = Header(default=None)):
     """נקרא ע"י ה-Watchdog של כל מחשב (לא ע"י המשתמש) - מחזיר את הפקודה הממתינה האחרונה
-    (אם יש) עבור המחשב הזה, ומיד מנקה את הסיסמה מה-DB כדי לצמצם חשיפה."""
+    (אם יש) עבור המחשב הזה, ומיד מנקה את הסיסמה מה-DB כדי לצמצם חשיפה.
+    no-store חובה: זה endpoint שנבדק כל 5 דק' ל-Stop/Start/Uninstall מרחוק - תגובה ממטמון
+    בקצה (CDN) תגרום לפקודות "לא להתקבל" בפועל אצל ה-agent, גם כשהן ממתינות ב-DB."""
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
     check_auth(x_agent_token)
     conn = get_db_connection()
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
@@ -618,11 +621,21 @@ def investigate(event_id: int, x_session_token: Optional[str] = Header(default=N
 
 @app.get("/api/agent-update")
 def agent_update():
-    """endpoint שממנו ה-agent המותקן על תחנות הקצה מושך גרסה מעודכנת של עצמו."""
+    """endpoint שממנו ה-agent המותקן על תחנות הקצה מושך גרסה מעודכנת של עצמו.
+    חשוב: no-store מפורש - בלי זה Vercel/הרשת מגישים תגובה ישנה מהמטמון בקצה (CDN),
+    וה-agent (ו-install.ps1 שמוריד מכאן כשאין send.ps1 מקומי) נשארים תקועים על גרסה ישנה
+    לצמיתות, גם כשה-deploy עצמו הצליח והקובץ בפועל התעדכן."""
     path = os.path.join(os.path.dirname(__file__), "agent", "send.ps1")
     try:
         with open(path, "r", encoding="utf-8") as f:
-            return PlainTextResponse(f.read())
+            content = f.read()
+        return PlainTextResponse(
+            content,
+            headers={
+                "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+                "Pragma": "no-cache",
+            },
+        )
     except Exception as ex:
         raise HTTPException(status_code=500, detail=str(ex))
 
