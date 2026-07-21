@@ -72,7 +72,10 @@ function Get-LogonFailureReason {
 
 function Send-SiemEvent {
     param($user, $action, $source, $ip, $reason = $null)
-    $body = @{ user = $user; action = $action; source = $source; ip = $ip; lan_ip = $LAN_IP; reason = $reason } | ConvertTo-Json
+    # שולחים גם שם מחשב "נקי" ועקבי (host) בנפרד מה-source (שהוא טקסט תיאורי שמשתנה לפי סוג האירוע
+    # - למשל "MOSHEBI-WIN10 (Event ID 4648)" מול "Service: X") - כדי שקיבוץ לפי מחשב בדשבורד
+    # (עמוד Computers) ופקודות מרחוק (Stop/Start/Uninstall) יעבדו נכון על אותו שם מחשב תמיד.
+    $body = @{ user = $user; action = $action; source = $source; host = $env:COMPUTERNAME; ip = $ip; lan_ip = $LAN_IP; reason = $reason } | ConvertTo-Json
     try {
         Invoke-RestMethod -Uri $SIEM_EVENT -Method Post -Body $body -ContentType "application/json" `
             -Headers @{ "X-Agent-Token" = $AGENT_TOKEN } -TimeoutSec 5 | Out-Null
