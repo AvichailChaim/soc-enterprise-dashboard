@@ -20,9 +20,20 @@ Settings -> Environment Variables בפרויקט:
 | `AGENT_TOKEN` | מחרוזת סודית שתבחר בעצמך, לדוגמה `openssl rand -hex 24`. חייבת להיות זהה לטוקן שמוזרק ל-agent בסעיף 3. |
 | `ADMIN_USERNAME` | שם המשתמש להתחברות לדשבורד עצמו (למשל `admin`). |
 | `ADMIN_PASSWORD` | הסיסמה להתחברות לדשבורד. בחר סיסמה חזקה - זו ההגנה היחידה על כל נתוני הדשבורד. |
+| `SMTP_USER` | כתובת Gmail השולחת התראות (למשל `you@gmail.com`). |
+| `SMTP_APP_PASSWORD` | App Password של אותו חשבון Gmail (**לא** הסיסמה הרגילה - ראה סעיף 1.1). |
+| `ALERT_EMAIL_TO` | כתובת המייל שמקבלת את ההתראות. אופציונלי - אם לא מוגדר, נשלח לאותה כתובת של `SMTP_USER`. |
 
 בלי `AGENT_TOKEN` מוגדר, ה-API ידלג על אימות הסוכנים (מצב פיתוח בלבד) — לא מומלץ בפרודקשן.
 בלי `ADMIN_USERNAME`+`ADMIN_PASSWORD` מוגדרים, הדשבורד יישאר **פתוח לגמרי בלי התחברות** — חובה להגדיר את שניהם בפרודקשן.
+בלי `SMTP_USER`+`SMTP_APP_PASSWORD` מוגדרים, התראות מייל מדולגות בשקט - המערכת ממשיכה לעבוד כרגיל, פשוט בלי מיילים.
+
+### 1.1 הקמת Gmail App Password (חד-פעמי)
+
+1. בחשבון ה-Gmail שממנו יישלחו ההתראות: אפשר אימות דו-שלבי (2-Step Verification), אם עדיין לא מופעל - ב-https://myaccount.google.com/security.
+2. עבור ל-https://myaccount.google.com/apppasswords, בחר שם (למשל "SOC Dashboard"), וצור סיסמה. Google ייצור סיסמה בת 16 תווים - זו ה-`SMTP_APP_PASSWORD` (בלי רווחים כשמכניסים לוורסל).
+3. הכנס את שלושת המשתנים (`SMTP_USER`, `SMTP_APP_PASSWORD`, ואופציונלית `ALERT_EMAIL_TO`) ב-Vercel -> Settings -> Environment Variables, ובצע Redeploy.
+4. התראות יישלחו אוטומטית על כל אירוע בסיוריטי Critical או High.
 
 לאחר שינוי משתני סביבה יש לבצע Redeploy בוורסל כדי שהם ייכנסו לתוקף.
 
@@ -107,7 +118,7 @@ Invoke-RestMethod -Uri "https://soc-enterprise-dashboard-hayanuka.vercel.app/api
 
 1. **הקשחת הרשאות השירות** (`sc sdset`) — כך שרק `NT AUTHORITY\SYSTEM` יכול לעצור/למחוק/לשנות את השירות. מנהל מערכת רגיל שינסה `Stop-Service`, `sc stop`/`sc delete`, `nssm stop`/`nssm remove`, או Services.msc יקבל "Access is denied".
 2. **סיסמת הסרה** — אם מריצים עם `-UninstallPassword "סיסמה"`, נשמר hash (SHA-256) בקובץ `C:\Hayanuka_SIEM\uninstall.hash`. בלי הסיסמה הנכונה, גם `install.ps1` (להתקנה מחדש) וגם `uninstall.ps1` (להסרה מלאה) יסרבו לפעול.
-3. **Watchdog** — Scheduled Task בשם `Hayanuka_SIEM_Watchdog` שרץ כ-SYSTEM כל 5 דקות; אם השירות נעלם/נעצר בלי לעבור דרך `uninstall.ps1`/`install.ps1` הרשמיים, הוא משחזר אותו אוטומטית **ושולח התראת Critical לדשבורד** (`agent_tamper_detected`).
+3. **Watchdog** — Scheduled Task בשם `Hayanuka_SIEM_Watchdog` שרץ כ-SYSTEM כל 5 דקות; אם השירות נעלם/נעצר בלי לעבור דרך `uninstall.ps1`/`install.ps1` הרשמיים, הוא משחזר אותו אוטומטית **ושולח התראת Critical לדשבורד** (`agent_tamper_detected`). כמו `send.ps1`, גם ל-`watchdog.ps1` יש מנגנון self-update (מוריד גרסה עדכנית מ-`/api/watchdog-update` בכל ריצה) - עדכון עתידי ל-watchdog מגיע אוטומטית לכל המחשבים תוך עד 5 דקות, בלי להריץ `install.ps1` מחדש בכל מחשב בנפרד.
 
 **איך מסירים לגמרי:** מריצים כ-Administrator בתחנה עצמה: `.\uninstall.ps1` (מבקש את הסיסמה). **איך מתקינים מחדש/מעדכנים** התקנה מוגנת קיימת: `.\install.ps1 -UninstallPassword "הסיסמה" [-AgentToken "..."]`.
 
