@@ -46,12 +46,14 @@ $agentPath   = "$installDir\send.ps1"
 $nssmPath    = "$installDir\nssm.exe"
 $localNssm   = Join-Path $PSScriptRoot "..\nssm.exe"   # api/nssm.exe, לצד תיקיית agent/ (אם קיים מקומית)
 $localSend   = Join-Path $PSScriptRoot "send.ps1"       # api/agent/send.ps1 (אם קיים מקומית)
+$localWatchdog = Join-Path $PSScriptRoot "watchdog.ps1" # api/agent/watchdog.ps1 (אם קיים מקומית)
 $hashFile    = "$installDir\uninstall.hash"
 $watchdogTask = "Hayanuka_SIEM_Watchdog"
 $serviceSddl  = "D:(A;;GA;;;SY)(A;;CCLCSWLOCRRC;;;BA)(A;;CCLCSWLOCRRC;;;IU)(A;;CCLCSWLOCRRC;;;SU)"
 
-$SEND_PS1_URL = "https://soc-enterprise-dashboard-hayanuka.vercel.app/api/agent-update"
-$NSSM_URL     = "https://soc-enterprise-dashboard-hayanuka.vercel.app/api/nssm-download"
+$SEND_PS1_URL     = "https://soc-enterprise-dashboard-hayanuka.vercel.app/api/agent-update"
+$WATCHDOG_PS1_URL = "https://soc-enterprise-dashboard-hayanuka.vercel.app/api/watchdog-update"
+$NSSM_URL         = "https://soc-enterprise-dashboard-hayanuka.vercel.app/api/nssm-download"
 
 if (!(Test-Path $installDir)) {
     New-Item -ItemType Directory -Path $installDir -Force | Out-Null
@@ -159,7 +161,7 @@ if ($AgentToken -ne "") {
     Write-Host "[!] WARNING: No -AgentToken provided. The placeholder token will be used and the server will reject events (401) until you set AGENT_TOKEN to match Vercel." -ForegroundColor Yellow
 }
 
-Set-Content -Path $agentPath -Value $agentContent -Force
+Set-Content -Path $agentPath -Value $agentContent -Force -Encoding UTF8
 
 # --- שלב 3: התקנה/הפעלה מחדש נקייה כשירות Windows ---
 if (Get-Service "Hayanuka_SIEM_Agent" -ErrorAction SilentlyContinue) {
@@ -229,112 +231,27 @@ if (-not $NoProtect) {
 
     Write-Host "[*] Registering tamper-detection watchdog (runs as SYSTEM every 5 minutes)..." -ForegroundColor Cyan
     $watchdogScriptPath = "$installDir\watchdog.ps1"
-    $watchdogTokenLine = if ($AgentToken -ne "") { $AgentToken } else { "CHANGE_ME_SET_SAME_VALUE_AS_VERCEL_AGENT_TOKEN" }
-    $watchdogContent = @"
-# Hayanuka SIEM Watchdog - רץ כ-SYSTEM כל 5 דקות. אם השירות נעלם/נעצר בלי אישור (לא דרך
-# control.ps1/uninstall.ps1 הרשמיים), משחזר אותו אוטומטית ושולח התראת Critical לדשבורד.
-`$installDir = "$installDir"
-`$debugFile = "`$installDir\debug.txt"
-`$maintenanceFile = "`$installDir\maintenance.flag"
-`$hashFile = "`$installDir\uninstall.hash"
-`$watchdogTaskName = "$watchdogTask"
-
-function Get-Sha256Hex(`$text) {
-    `$sha = [System.Security.Cryptography.SHA256]::Create()
-    `$bytes = `$sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes(`$text))
-    return ([System.BitConverter]::ToString(`$bytes) -replace '-', '').ToLower()
-}
-
-function Send-TamperAlert(`$reasonText) {
-    try {
-        Invoke-RestMethod -Uri "https://soc-enterprise-dashboard-hayanuka.vercel.app/api/event" -Method Post ``
-            -Body (@{ user = `$env:USERNAME; action = "agent_tamper_detected"; source = "`$(`$env:COMPUTERNAME): `$reasonText"; ip = "127.0.0.1" } | ConvertTo-Json) ``
-            -ContentType "application/json" -Headers @{ "X-Agent-Token" = "$watchdogTokenLine" } -TimeoutSec 5 | Out-Null
-    } catch {}
-}
-
-# ===== פקודות מרוחקות מהדשבורד (Computers page: Stop / Start / Uninstall) =====
-# נבדק בכל ריצה (כל 5 דק'), בלי קשר למצב השירות. הפקודה מבוצעת רק אם הסיסמה שנשלחה
-# מהדשבורד תואמת ל-hash המקומי - כלומר גישה לדשבורד לבדה לא מספיקה כדי להסיר/לעצור.
-try {
-    `$cmdResp = Invoke-RestMethod -Uri "https://soc-enterprise-dashboard-hayanuka.vercel.app/api/agent-command?host=`$(`$env:COMPUTERNAME)" ``
-        -Headers @{ "X-Agent-Token" = "$watchdogTokenLine" } -TimeoutSec 10 -ErrorAction Stop
-    "`$(Get-Date) Watchdog: checked for remote commands - found: `$(if (`$cmdResp -and `$cmdResp.command) { `$cmdResp.command } else { 'none' })" | Out-File `$debugFile -Append
-    if (`$cmdResp -and `$cmdResp.command) {
-        `$passOk = (Test-Path `$hashFile) -and `$cmdResp.password -and ((Get-Sha256Hex `$cmdResp.password) -eq (Get-Content `$hashFile -Raw).Trim())
-        if (-not `$passOk) {
-            "`$(Get-Date) Remote command '`$(`$cmdResp.command)' received but password did NOT match local hash - ignored." | Out-File `$debugFile -Append
-        } else {
-            "`$(Get-Date) Remote command '`$(`$cmdResp.command)' verified - executing." | Out-File `$debugFile -Append
-            if (`$cmdResp.command -eq "stop") {
-                `$minutes = if (`$cmdResp.maintenance_minutes) { `$cmdResp.maintenance_minutes } else { 60 }
-                (Get-Date).ToUniversalTime().AddMinutes(`$minutes).ToString("o") | Out-File `$maintenanceFile -Force
-                Stop-Service "Hayanuka_SIEM_Agent" -Force -ErrorAction SilentlyContinue
-            } elseif (`$cmdResp.command -eq "start") {
-                Remove-Item `$maintenanceFile -ErrorAction SilentlyContinue
-                Start-Service "Hayanuka_SIEM_Agent" -ErrorAction SilentlyContinue
-            } elseif (`$cmdResp.command -eq "uninstall") {
-                `$q = [char]34
-                `$helperPath = Join-Path `$env:TEMP "hayanuka_remote_removal.ps1"
-                `$helperLines = @(
-                    "try {"
-                    "    Stop-Service `${q}Hayanuka_SIEM_Agent`${q} -Force -ErrorAction SilentlyContinue"
-                    "    if (Test-Path `${q}`$installDir\nssm.exe`${q}) { & `${q}`$installDir\nssm.exe`${q} remove `${q}Hayanuka_SIEM_Agent`${q} confirm 2>```$null | Out-Null }"
-                    "    Unregister-ScheduledTask -TaskName `${q}`$watchdogTaskName`${q} -Confirm:```$false -ErrorAction SilentlyContinue"
-                    "    Start-Sleep -Seconds 1"
-                    "    Remove-Item -Path `${q}`$installDir`${q} -Recurse -Force -ErrorAction SilentlyContinue"
-                    "} catch {}"
-                )
-                Set-Content -Path `$helperPath -Value (`$helperLines -join "``n") -Force
-                `$rTaskName = "Hayanuka_Remote_Removal_`$([guid]::NewGuid().ToString('N').Substring(0,8))"
-                `$argValue = "-ExecutionPolicy Bypass -NoProfile -File `$q`$helperPath`$q"
-                `$rAction = New-ScheduledTaskAction -Execute "powershell.exe" -Argument `$argValue
-                `$rPrincipal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
-                Register-ScheduledTask -TaskName `$rTaskName -Action `$rAction -Principal `$rPrincipal -Force | Out-Null
-                Start-ScheduledTask -TaskName `$rTaskName
-                "`$(Get-Date) Remote uninstall triggered via dashboard - agent will be removed shortly." | Out-File `$debugFile -Append
-                exit
-            }
+    # watchdog.ps1 הוא כרגע קובץ עצמאי (api/agent/watchdog.ps1) עם מנגנון self-update משלו -
+    # בדיוק כמו send.ps1 - כדי שתיקונים עתידיים יתפשטו אוטומטית בלי להריץ install.ps1 מחדש
+    # בכל מחשב. זה גם מבטל לצמיתות את כל הבעיות השבירות שהיו במחרוזת מקוננת שיצרה אותו בעבר.
+    if (Test-Path $localWatchdog) {
+        Write-Host "[*] Using local watchdog.ps1..." -ForegroundColor Cyan
+        $watchdogContent = Get-Content -Path $localWatchdog -Raw
+    } else {
+        Write-Host "[*] watchdog.ps1 not found locally, downloading latest version from server..." -ForegroundColor Yellow
+        try {
+            [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls13
+            $watchdogContent = (Invoke-WebRequest -Uri $WATCHDOG_PS1_URL -UseBasicParsing -ErrorAction Stop).Content
+            Write-Host "[+] watchdog.ps1 downloaded successfully." -ForegroundColor Green
+        } catch {
+            Write-Host "[!] CRITICAL: could not find or download watchdog.ps1. $($_.Exception.Message)" -ForegroundColor Red
+            exit 1
         }
     }
-} catch {
-    "`$(Get-Date) Watchdog: remote-command check failed: `$(`$_.Exception.Message)" | Out-File `$debugFile -Append
-}
-
-# חלון תחזוקה מבוקר-סיסמה (נפתח ע"י control.ps1 -Action Stop, או "Stop" מהדשבורד) - כל עוד הוא בתוקף, לא משחזרים ולא מתריעים
-`$maintenanceActive = `$false
-if (Test-Path `$maintenanceFile) {
-    try {
-        `$expiry = [datetime]::Parse((Get-Content `$maintenanceFile -Raw).Trim(), `$null, [System.Globalization.DateTimeStyles]::RoundtripKind)
-        if ((Get-Date).ToUniversalTime() -lt `$expiry) { `$maintenanceActive = `$true }
-        else { Remove-Item `$maintenanceFile -ErrorAction SilentlyContinue }
-    } catch { Remove-Item `$maintenanceFile -ErrorAction SilentlyContinue }
-}
-
-if (`$maintenanceActive) {
-    "`$(Get-Date) Watchdog: authorized maintenance window active, skipping checks." | Out-File `$debugFile -Append
-    exit
-}
-
-`$svc = Get-Service "Hayanuka_SIEM_Agent" -ErrorAction SilentlyContinue
-if (-not `$svc) {
-    "`$(Get-Date) TAMPER ALERT: service is missing - attempting automatic restore." | Out-File `$debugFile -Append
-    if ((Test-Path "`$installDir\send.ps1") -and (Test-Path "`$installDir\nssm.exe")) {
-        & "`$installDir\nssm.exe" install "Hayanuka_SIEM_Agent" "C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"
-        & "`$installDir\nssm.exe" set "Hayanuka_SIEM_Agent" AppParameters "-ExecutionPolicy Bypass -NoProfile -File ```"`$installDir\send.ps1```""
-        & "`$installDir\nssm.exe" set "Hayanuka_SIEM_Agent" AppDirectory `$installDir
-        & "`$installDir\nssm.exe" set "Hayanuka_SIEM_Agent" Start SERVICE_AUTO_START
-        & "`$installDir\nssm.exe" start "Hayanuka_SIEM_Agent" 2>`$null | Out-Null
-        & sc.exe sdset "Hayanuka_SIEM_Agent" "$serviceSddl" | Out-Null
-        Send-TamperAlert "SIEM agent service was REMOVED without authorization and was auto-restored"
+    if ($AgentToken -ne "") {
+        $watchdogContent = $watchdogContent -replace 'CHANGE_ME_SET_SAME_VALUE_AS_VERCEL_AGENT_TOKEN', $AgentToken
     }
-} elseif (`$svc.Status -notin @("Running", "StartPending")) {
-    "`$(Get-Date) TAMPER ALERT: service found in state `$(`$svc.Status) without an authorized maintenance window - restarting." | Out-File `$debugFile -Append
-    Start-Service "Hayanuka_SIEM_Agent" -ErrorAction SilentlyContinue
-    Send-TamperAlert "SIEM agent service was STOPPED without authorization and was auto-restarted"
-}
-"@
-    Set-Content -Path $watchdogScriptPath -Value $watchdogContent -Force
+    Set-Content -Path $watchdogScriptPath -Value $watchdogContent -Force -Encoding UTF8
 
     Unregister-ScheduledTask -TaskName $watchdogTask -Confirm:$false -ErrorAction SilentlyContinue
     $wdAction = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-ExecutionPolicy Bypass -NoProfile -File `"$watchdogScriptPath`""
