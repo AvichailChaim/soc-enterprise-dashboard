@@ -1,11 +1,13 @@
 import os
 import secrets
 import hmac
+import smtplib
+from email.mime.text import MIMEText
 from typing import Optional
 
 import psycopg2
 import psycopg2.extras
-from fastapi import FastAPI, HTTPException, Header, Request
+from fastapi import FastAPI, HTTPException, Header, Request, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse, Response
 from pydantic import BaseModel
@@ -27,6 +29,12 @@ AGENT_TOKEN = os.environ.get("AGENT_TOKEN")
 ADMIN_USERNAME = os.environ.get("ADMIN_USERNAME")
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD")
 SESSION_HOURS = 24
+
+# התראות מייל ל-Critical/High (Gmail SMTP + App Password). אם לא מוגדרים - שליחת המייל
+# מדולגת בשקט (לא שובר קליטת אירועים אם המנהל עדיין לא הגדיר את זה).
+SMTP_USER = os.environ.get("SMTP_USER")            # כתובת ה-Gmail השולחת
+SMTP_APP_PASSWORD = os.environ.get("SMTP_APP_PASSWORD")   # App Password (לא הסיסמה הרגילה)
+ALERT_EMAIL_TO = os.environ.get("ALERT_EMAIL_TO", SMTP_USER)   # נמען ההתראות (ברירת מחדל: אותה כתובת)
 
 
 def get_db_connection():
@@ -334,8 +342,38 @@ def get_wan_ip(request: Request) -> Optional[str]:
     return request.client.host if request.client else None
 
 
+def send_alert_email(severity, action, user, host, ip, description, mitre, event_id):
+    """שולח מייל התראה על אירוע Critical/High באמצעות Gmail SMTP + App Password.
+    רץ כ-BackgroundTask (אחרי שהתגובה ל-agent כבר נשלחה) כדי לא להאט את קליטת האירוע -
+    ל-agent יש timeout של 5 שניות על הבקשה, ו-SMTP יכול לפעמים להיות איטי."""
+    if not (SMTP_USER and SMTP_APP_PASSWORD and ALERT_EMAIL_TO):
+        return
+    try:
+        subject = f"[SOC {severity}] {action} - {host or 'unknown host'}"
+        body = (
+            f"Severity: {severity}\n"
+            f"Action: {action}\n"
+            f"Host: {host}\n"
+            f"User: {user}\n"
+            f"IP: {ip}\n"
+            f"MITRE: {mitre}\n\n"
+            f"{description}\n\n"
+            f"Event ID: {event_id}\n"
+            f"Dashboard: https://soc-enterprise-dashboard-hayanuka.vercel.app"
+        )
+        msg = MIMEText(body, "plain", "utf-8")
+        msg["Subject"] = subject
+        msg["From"] = SMTP_USER
+        msg["To"] = ALERT_EMAIL_TO
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=10) as server:
+            server.login(SMTP_USER, SMTP_APP_PASSWORD)
+            server.sendmail(SMTP_USER, [ALERT_EMAIL_TO], msg.as_string())
+    except Exception as ex:
+        print(f"[-] alert email failed: {ex}")
+
+
 @app.post("/api/event")
-def create_event(e: Event, request: Request, x_agent_token: Optional[str] = Header(default=None)):
+def create_event(e: Event, request: Request, background_tasks: BackgroundTasks, x_agent_token: Optional[str] = Header(default=None)):
     check_auth(x_agent_token)
     host = e.host or e.source
     wan_ip = get_wan_ip(request)
@@ -362,6 +400,11 @@ def create_event(e: Event, request: Request, x_agent_token: Optional[str] = Head
         conn.commit()
         cur.close()
         conn.close()
+        if result["severity"] in ("Critical", "High"):
+            background_tasks.add_task(
+                send_alert_email, result["severity"], e.action, e.user, host, e.ip,
+                result["description"], result["mitre"], event_id,
+            )
         return {"status": "ok", "event_id": event_id, **result}
     except Exception as ex:
         raise HTTPException(status_code=500, detail=str(ex))
