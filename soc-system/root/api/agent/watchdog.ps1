@@ -1,4 +1,5 @@
 # Hayanuka SIEM Watchdog - רץ כ-SYSTEM כל 5 דקות (Scheduled Task, לא שירות).
+# self-update test marker: v2
 # 1. self-update - מוריד גרסה עדכנית של עצמו מהשרת (בדיוק כמו send.ps1), כדי שתיקונים עתידיים
 #    יתפשטו אוטומטית לכל המחשבים בלי צורך להריץ install.ps1 מחדש בכל מחשב בנפרד.
 # 2. אם השירות נעלם/נעצר בלי אישור (לא דרך control.ps1/uninstall.ps1/הדשבורד) - משחזר אותו
