@@ -683,6 +683,25 @@ def agent_update():
         raise HTTPException(status_code=500, detail=str(ex))
 
 
+@app.get("/api/watchdog-update")
+def watchdog_update():
+    """endpoint שממנו ה-watchdog בכל מחשב מושך גרסה מעודכנת של עצמו (בדיוק כמו /api/agent-update
+    ל-send.ps1). no-store חובה - ראה ההערה המפורטת ב-/api/agent-update."""
+    path = os.path.join(os.path.dirname(__file__), "agent", "watchdog.ps1")
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            content = f.read()
+        return PlainTextResponse(
+            content,
+            headers={
+                "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+                "Pragma": "no-cache",
+            },
+        )
+    except Exception as ex:
+        raise HTTPException(status_code=500, detail=str(ex))
+
+
 @app.get("/api/nssm-download")
 def nssm_download():
     """endpoint שממנו install.ps1 מוריד את nssm.exe אם הוא לא קיים מקומית -
